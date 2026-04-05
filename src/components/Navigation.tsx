@@ -98,85 +98,116 @@ export default function Navigation() {
         </button>
       </div>
 
-      {/* Mobile Drawer */}
+      {/* Mobile Menu Overlay - Solid & Full Screen */}
       {isMobileMenuOpen && (
         <div style={{
           position: 'fixed',
-          inset: 0,
-          zIndex: 2000,
-          backgroundColor: 'rgba(0,0,0,0.8)',
-          backdropFilter: 'blur(10px)',
-          animation: 'fadeIn 0.3s ease'
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: '#060608', // Pure solid background
+          zIndex: 99999,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden'
         }}>
-          <div style={{
-            position: 'absolute',
-            right: 0,
-            top: 0,
-            bottom: 0,
-            width: '280px',
-            background: 'var(--background)',
-            borderLeft: '1px solid var(--border)',
-            padding: '2rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '2rem'
+          {/* Menu Header Area */}
+          <div style={{ 
+            height: '80px', 
+            padding: '0 1.5rem', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            borderBottom: '1px solid rgba(255,255,255,0.1)',
+            backgroundColor: '#060608'
           }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                 <img src="/logo.png" alt="KeepNoteAI" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
-                 <span className="logo" style={{ fontSize: '1.2rem' }}>KeepNoteAI</span>
-               </div>
-               <button onClick={() => setIsMobileMenuOpen(false)} style={{ color: 'var(--text-muted)' }}>
-                 <X size={24} />
-               </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <img src="/logo.png" alt="Logo" style={{ width: '32px', height: '32px' }} />
+              <span style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff' }}>KeepNoteAI</span>
             </div>
+            <button 
+              onClick={() => setIsMobileMenuOpen(false)}
+              style={{ 
+                background: 'rgba(255,255,255,0.05)', 
+                border: '1px solid rgba(255,255,255,0.1)',
+                padding: '0.6rem', 
+                borderRadius: '12px',
+                color: '#fff',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <X size={24} />
+            </button>
+          </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {links.map((link) => {
-                const Icon = link.icon;
-                const isActive = pathname === link.href;
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    onClick={() => setIsMobileMenuOpen(false)}
-                    style={{ 
-                       display: 'flex', 
-                       alignItems: 'center', 
-                       gap: '1rem', 
-                       color: isActive ? 'var(--primary)' : 'var(--foreground)',
-                       fontWeight: 600,
-                       fontSize: '1.1rem',
-                       padding: '1rem',
-                       backgroundColor: isActive ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                       borderRadius: '12px'
-                    }}
-                  >
-                    <Icon size={22} />
-                    <span>{link.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
+          {/* Nav Links Area */}
+          <div style={{ 
+            flex: 1, 
+            padding: '2rem 1.5rem', 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '1.25rem',
+            overflowY: 'auto',
+            backgroundColor: '#060608'
+          }}>
+            {links.map((link) => {
+              const Icon = link.icon;
+              const isActive = pathname === link.href;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  style={{ 
+                     display: 'flex', 
+                     alignItems: 'center', 
+                     gap: '1.25rem', 
+                     color: isActive ? '#3b82f6' : '#fff',
+                     fontWeight: isActive ? 800 : 600,
+                     fontSize: '1.25rem', // Larger text
+                     padding: '1.5rem',
+                     backgroundColor: isActive ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                     border: '1px solid',
+                     borderColor: isActive ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                     borderRadius: '20px',
+                     textDecoration: 'none'
+                  }}
+                >
+                  <Icon size={28} color={isActive ? '#3b82f6' : 'rgba(255,255,255,0.6)'} />
+                  <span>{link.label}</span>
+                </Link>
+              );
+            })}
+          </div>
 
-            <div style={{ marginTop: 'auto', borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
-               <button
-                onClick={() => signOut()}
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '1rem', 
-                  color: 'var(--error)', 
-                  fontWeight: 700,
-                  fontSize: '1.1rem',
-                  width: '100%',
-                  padding: '1rem'
-                }}
-              >
-                <LogOut size={22} />
-                <span>Keluar Akun</span>
-              </button>
-            </div>
+          {/* Logout Section */}
+          <div style={{ padding: '2rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', backgroundColor: '#060608' }}>
+             <button
+              onClick={() => signOut()}
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                gap: '1rem', 
+                color: '#fff',
+                backgroundColor: '#ef4444',
+                border: 'none',
+                fontWeight: 800,
+                fontSize: '1.25rem',
+                width: '100%',
+                padding: '1.5rem',
+                borderRadius: '20px',
+                cursor: 'pointer',
+                boxShadow: '0 8px 16px rgba(239, 68, 68, 0.25)'
+              }}
+            >
+              <LogOut size={26} />
+              <span>Keluar Akun</span>
+            </button>
           </div>
         </div>
       )}
