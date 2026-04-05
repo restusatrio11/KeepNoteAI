@@ -7,6 +7,8 @@ import { eq } from 'drizzle-orm';
 import { extractTextFromPDF } from '@/lib/pdf-parser';
 const mammoth = require('mammoth');
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
