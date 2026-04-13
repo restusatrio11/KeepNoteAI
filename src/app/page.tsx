@@ -7,6 +7,8 @@ import { FileText, CheckCircle, Clock, Plus, Download, TrendingUp } from 'lucide
 import Link from 'next/link';
 import DashboardFilter from '@/components/DashboardFilter';
 import ReportHealth from '@/components/ReportHealth';
+import PlanningBoard from '@/components/PlanningBoard';
+import WorkflowSection from '@/components/WorkflowSection';
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const session = await auth();
@@ -17,6 +19,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
   const { from, to } = await searchParams;
   const userId = session.user.id as string;
+  const todayStr = new Date().toISOString().split('T')[0];
 
   const filters = [eq(laporan.userId, userId)];
   if (from) filters.push(gte(laporan.tanggal, from));
@@ -66,6 +69,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
       <DashboardFilter />
 
+      <WorkflowSection />
+
       <div className="grid-stats" style={{ marginBottom: '4rem' }}>
         {stats.map((stat, i) => (
           <div key={i} className="card glass" style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
@@ -88,8 +93,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           </div>
         ))}
       </div>
+      
+      <PlanningBoard initialDate={todayStr} />
 
-      <div className="grid-dashboard">
+      <div className="grid-dashboard" style={{ marginBottom: '4rem' }}>
         {/* Main List Section */}
         <section className="card glass">
           <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '2rem' }}>Aktivitas Terbaru</h2>

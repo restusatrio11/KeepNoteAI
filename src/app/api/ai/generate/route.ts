@@ -7,8 +7,8 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { deskripsi } = await req.json();
-    const result = await generateLaporanAI(deskripsi);
+    const { deskripsi, rencanaContext, timContext } = await req.json();
+    const result = await generateLaporanAI(deskripsi, rencanaContext, timContext);
     return NextResponse.json(result);
   } catch (error) {
     console.error(error);

@@ -25,6 +25,30 @@ export async function getDriveClient() {
   return google.drive({ version: 'v3', auth: oauth2Client });
 }
 
+export async function createFolder(name: string) {
+  const drive = await getDriveClient();
+  const response = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: 'application/vnd.google-apps.folder',
+    },
+    fields: 'id',
+  });
+  return response.data.id;
+}
+
+export async function shareFile(fileId: string, email: string) {
+  const drive = await getDriveClient();
+  await drive.permissions.create({
+    fileId,
+    requestBody: {
+      role: 'writer',
+      type: 'user',
+      emailAddress: email,
+    },
+  });
+}
+
 export async function uploadToDrive(file: Buffer, fileName: string, mimeType: string, folderId: string) {
   const drive = await getDriveClient();
 
@@ -54,3 +78,4 @@ export async function uploadToDrive(file: Buffer, fileName: string, mimeType: st
     link: response.data.webViewLink,
   };
 }
+

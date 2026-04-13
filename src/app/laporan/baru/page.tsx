@@ -1,8 +1,9 @@
 import { auth } from '@/auth';
 import { redirect } from 'next/navigation';
 import { db } from '@/db';
-import { masterRencana, laporan } from '@/db/schema';
+import { masterRencana, timKerja } from '@/db/schema';
 import FormLaporan from './FormLaporan';
+import { eq } from 'drizzle-orm';
 
 export default async function BaruLaporanPage() {
   const session = await auth();
@@ -12,7 +13,10 @@ export default async function BaruLaporanPage() {
     redirect('/api/auth/signin');
   }
 
-  const rencanaOptions = await db.select().from(masterRencana);
+  const [rencanaOptions, timOptions] = await Promise.all([
+    db.select().from(masterRencana).where(eq(masterRencana.userId, userId as string)),
+    db.select().from(timKerja).where(eq(timKerja.userId, userId as string))
+  ]);
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', paddingBottom: '5rem' }}>
@@ -21,7 +25,7 @@ export default async function BaruLaporanPage() {
         <p style={{ color: 'var(--text-muted)' }}>Isi detail pekerjaan Anda dan biarkan AI menyusun deskripsi profesional.</p>
       </header>
 
-      <FormLaporan rencanaOptions={rencanaOptions} userId={userId as string} />
+      <FormLaporan rencanaOptions={rencanaOptions} timOptions={timOptions} userId={userId as string} />
     </div>
   );
 }

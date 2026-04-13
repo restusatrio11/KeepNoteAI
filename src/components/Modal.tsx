@@ -72,6 +72,19 @@ export default function Modal({ isOpen, onClose, title, children, width = '600px
           from { transform: translateY(20px); opacity: 0; }
           to { transform: translateY(0); opacity: 1; }
         }
+        .card::-webkit-scrollbar {
+          width: 6px;
+        }
+        .card::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .card::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 10px;
+        }
+        .card::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 255, 255, 0.2);
+        }
       `}</style>
     </div>,
     document.body

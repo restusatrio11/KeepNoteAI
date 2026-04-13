@@ -5,24 +5,32 @@ import { useRouter } from 'next/navigation';
 import { 
   Calendar, Target, Activity, CheckCircle, 
   Image as ImageIcon, Loader2, Sparkles, UploadCloud, X,
-  Wand2, BrainCircuit, FileText, Video as VideoIcon, Check
+  Wand2, BrainCircuit, FileText, Video as VideoIcon, Check, Users
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import SearchableSelect from '@/components/SearchableSelect';
 
 interface FormLaporanProps {
   rencanaOptions: any[];
+  timOptions: any[];
   userId: string;
 }
 
-export default function FormLaporan({ rencanaOptions, userId }: FormLaporanProps) {
+export default function FormLaporan({ rencanaOptions, timOptions, userId }: FormLaporanProps) {
   const router = useRouter();
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isFetchingPlans, setIsFetchingPlans] = useState(false);
+  const [selectedTimId, setSelectedTimId] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+
+  const filteredPrograms = selectedTimId 
+    ? rencanaOptions.filter(r => r.timId === selectedTimId)
+    : rencanaOptions;
 
   const [uraianDasar, setUraianDasar] = useState('');
 
@@ -52,10 +60,17 @@ export default function FormLaporan({ rencanaOptions, userId }: FormLaporanProps
 
     setIsGenerating(true);
     try {
+      const selectedTim = timOptions.find(t => t.id === selectedTimId)?.nama;
+      const selectedRencana = rencanaOptions.find(r => r.id === formData.rencanaId)?.nama;
+
       const res = await fetch('/api/ai/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deskripsi: uraianDasar }),
+        body: JSON.stringify({ 
+          deskripsi: uraianDasar,
+          timContext: selectedTim,
+          rencanaContext: selectedRencana
+        }),
       });
       const data = await res.json();
       if (data.kegiatan && data.capaian) {
@@ -70,6 +85,24 @@ export default function FormLaporan({ rencanaOptions, userId }: FormLaporanProps
       showToast('AI sedang sibuk, coba lagi nanti.', 'error');
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleDraftFromPlans = async () => {
+    setIsFetchingPlans(true);
+    try {
+      const res = await fetch(`/api/ai/plans-to-draft?date=${formData.tanggal}`);
+      const data = await res.json();
+      if (data.draft) {
+        setUraianDasar(data.draft);
+        showToast('Berhasil menarik rencana harian!', 'success');
+      } else {
+        showToast('Belum ada rencana yang selesai (centang) untuk tanggal ini.', 'info');
+      }
+    } catch (error) {
+      showToast('Gagal menarik rencana.', 'error');
+    } finally {
+      setIsFetchingPlans(false);
     }
   };
 
@@ -218,21 +251,27 @@ export default function FormLaporan({ rencanaOptions, userId }: FormLaporanProps
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-          <label style={{ fontSize: '0.9rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
-            <Target size={16} color="var(--primary)" />
-            Rencana Kerja
-          </label>
-          <select 
-            required
+          <SearchableSelect 
+            label="Pilih Tim Kerja"
+            options={timOptions}
+            value={selectedTimId}
+            onChange={(val) => {
+              setSelectedTimId(val);
+              setFormData({ ...formData, rencanaId: '' });
+            }}
+            placeholder="Lihat Semua Program"
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <SearchableSelect 
+            label="Pilih Program Kerja"
+            options={filteredPrograms}
             value={formData.rencanaId}
-            onChange={(e) => setFormData({ ...formData, rencanaId: e.target.value })}
-            className="input-base"
-          >
-            <option value="">Pilih Program...</option>
-            {rencanaOptions.map(r => (
-              <option key={r.id} value={r.id}>{r.nama}</option>
-            ))}
-          </select>
+            onChange={(val) => setFormData({ ...formData, rencanaId: val })}
+            placeholder="Pilih Program..."
+            required
+          />
         </div>
       </div>
 
@@ -243,10 +282,22 @@ export default function FormLaporan({ rencanaOptions, userId }: FormLaporanProps
         border: '1px solid rgba(59, 130, 246, 0.1)',
         marginBottom: '1rem'
       }}>
-        <label style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--primary)' }}>
-          <Sparkles size={18} className={isGenerating ? 'animate-pulse' : ''} />
-          Uraian Tugas Dasar (Ketik Disini)
-        </label>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <label style={{ fontSize: '1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--primary)' }}>
+            <Sparkles size={18} className={isGenerating ? 'animate-pulse' : ''} />
+            Uraian Tugas Dasar (Ketik Disini)
+          </label>
+          <button 
+            type="button" 
+            onClick={handleDraftFromPlans}
+            disabled={isFetchingPlans}
+            className="btn glass"
+            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', height: 'auto', border: '1px dashed var(--primary)', borderRadius: '10px' }}
+          >
+            {isFetchingPlans ? <Loader2 size={14} className="spin" /> : <BrainCircuit size={14} />}
+            <span>Draft dari Rencana Hari Ini ✨</span>
+          </button>
+        </div>
         <textarea 
           rows={3}
           placeholder="Tuliskan kasar kegiatan hari ini... AI Magic akan menyusunnya ke bahasa profesional"
@@ -303,19 +354,13 @@ export default function FormLaporan({ rencanaOptions, userId }: FormLaporanProps
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem', marginTop: '0.5rem' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-           <label style={{ fontSize: '0.9rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            Progress Kerja
-          </label>
-          <select 
-            required
+          <SearchableSelect 
+            label="Progress Kerja"
+            options={['0%', '25%', '50%', '75%', '100%'].map(p => ({ id: p, nama: p }))}
             value={formData.progress}
-            onChange={(e) => setFormData({ ...formData, progress: e.target.value })}
-            className="input-base"
-          >
-            {['0%', '25%', '50%', '75%', '100%'].map(p => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
+            onChange={(val) => setFormData({ ...formData, progress: val })}
+            required
+          />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon } from 'lucide-react';
+import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon, Copy } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReportModal from './ReportModal';
 import { useToast } from '@/providers/ToastProvider';
@@ -12,6 +12,7 @@ export default function LaporanPage() {
   
   const [reports, setReports] = useState<any[]>([]);
   const [rencanaOptions, setRencanaOptions] = useState<any[]>([]);
+  const [timOptions, setTimOptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
 
@@ -25,6 +26,7 @@ export default function LaporanPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isCopyModalOpen, setIsCopyModalOpen] = useState(false);
   const [selectedReport, setSelectedReport] = useState<any>(null);
 
   const fetchReports = useCallback(async () => {
@@ -53,10 +55,18 @@ export default function LaporanPage() {
 
   useEffect(() => {
     async function loadOptions() {
-      const res = await fetch('/api/rencana');
-      if (res.ok) {
-        const data = await res.json();
+      const [resRencana, resTim] = await Promise.all([
+        fetch('/api/rencana'),
+        fetch('/api/tim')
+      ]);
+      
+      if (resRencana.ok) {
+        const data = await resRencana.json();
         setRencanaOptions(data);
+      }
+      if (resTim.ok) {
+        const data = await resTim.json();
+        setTimOptions(data);
       }
     }
     loadOptions();
@@ -205,6 +215,9 @@ export default function LaporanPage() {
                             <ExternalLink size={16} />
                           </a>
                         )}
+                        <button onClick={() => { setSelectedReport(report); setIsCopyModalOpen(true); }} className="btn glass" title="Salin Laporan" style={{ padding: '0.5rem', borderRadius: '10px', color: 'var(--primary)' }}>
+                          <Copy size={16} />
+                        </button>
                         <button onClick={() => { setSelectedReport(report); setIsEditModalOpen(true); }} className="btn glass" style={{ padding: '0.5rem', borderRadius: '10px', color: '#f59e0b' }}>
                           <Edit2 size={16} />
                         </button>
@@ -227,12 +240,16 @@ export default function LaporanPage() {
         </div>
       </div>
 
-      <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Tambah Laporan Baru">
-        <ReportModal rencanaOptions={rencanaOptions} onClose={() => setIsAddModalOpen(false)} onSuccess={fetchReports} />
+      <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="Tambah Laporan Baru" width="800px">
+        <ReportModal rencanaOptions={rencanaOptions} timOptions={timOptions} onClose={() => setIsAddModalOpen(false)} onSuccess={fetchReports} />
       </Modal>
 
-      <Modal isOpen={isEditModalOpen} onClose={() => { setIsEditModalOpen(false); setSelectedReport(null); }} title="Edit Data Laporan">
-        <ReportModal report={selectedReport} rencanaOptions={rencanaOptions} onClose={() => { setIsEditModalOpen(false); setSelectedReport(null); }} onSuccess={fetchReports} />
+      <Modal isOpen={isEditModalOpen} onClose={() => { setIsEditModalOpen(false); setSelectedReport(null); }} title="Edit Data Laporan" width="800px">
+        <ReportModal report={selectedReport} rencanaOptions={rencanaOptions} timOptions={timOptions} onClose={() => { setIsEditModalOpen(false); setSelectedReport(null); }} onSuccess={fetchReports} />
+      </Modal>
+
+      <Modal isOpen={isCopyModalOpen} onClose={() => { setIsCopyModalOpen(false); setSelectedReport(null); }} title="Salin Laporan (Baru)" width="800px">
+        <ReportModal isCopy report={selectedReport} rencanaOptions={rencanaOptions} timOptions={timOptions} onClose={() => { setIsCopyModalOpen(false); setSelectedReport(null); }} onSuccess={fetchReports} />
       </Modal>
 
       <Modal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} title="Konfirmasi Hapus">

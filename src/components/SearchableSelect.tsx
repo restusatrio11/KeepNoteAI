@@ -96,11 +96,12 @@ export default function SearchableSelect({
       >
         <span style={{ 
           color: selectedOption ? '#fff' : 'rgba(255, 255, 255, 0.3)',
-          fontSize: '0.95rem',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          flex: 1
+          fontSize: '0.9rem',
+          whiteSpace: 'normal',
+          wordBreak: 'break-word',
+          lineHeight: '1.4',
+          flex: 1,
+          padding: '0.5rem 0'
         }}>
           {selectedOption ? selectedOption.nama : placeholder}
         </span>
@@ -190,7 +191,7 @@ export default function SearchableSelect({
                   className="dropdown-item"
                 >
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontSize: '0.9rem', color: value === opt.id ? 'var(--primary)' : '#fff', fontWeight: value === opt.id ? 700 : 400 }}>
+                    <span style={{ fontSize: '0.9rem', color: value === opt.id ? 'var(--primary)' : '#fff', fontWeight: value === opt.id ? 700 : 400, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: '1.4' }}>
                       {opt.nama}
                     </span>
                     {opt.kode && (

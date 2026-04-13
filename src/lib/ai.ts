@@ -1,4 +1,4 @@
-export async function generateLaporanAI(deskripsi: string) {
+export async function generateLaporanAI(deskripsi: string, rencanaContext?: string, timContext?: string) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   const model = process.env.AI_MODEL || 'qwen/qwen3.6-plus:free';
 
@@ -6,8 +6,16 @@ export async function generateLaporanAI(deskripsi: string) {
     throw new Error('OPENROUTER_API_KEY is not set');
   }
 
+  const contextStr = [
+    timContext ? `Tim Kerja: ${timContext}` : '',
+    rencanaContext ? `Program Kerja: ${rencanaContext}` : ''
+  ].filter(Boolean).join('\n');
+
   const prompt = `Ubah deskripsi pekerjaan berikut menjadi laporan kerja profesional dalam Bahasa Indonesia.
-Deskripsi dari user: "${deskripsi}"
+${contextStr ? `Konteks Pekerjaan:\n${contextStr}\n` : ''}
+Deskripsi Tugas Dasar dari user: "${deskripsi}"
+
+Gunakan konteks Tim dan Program di atas untuk menyesuaikan kosa kata dan standar profesionalitas hasil laporan.
 
 Format Output (JSON):
 {

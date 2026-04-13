@@ -4,36 +4,46 @@ import { useState, useEffect } from 'react';
 import { 
   Calendar, Target, Activity, CheckCircle, 
   Image as ImageIcon, Loader2, Sparkles, UploadCloud, X,
-  BrainCircuit, Wand2, FileText, Video as VideoIcon, Check
+  BrainCircuit, Wand2, FileText, Video as VideoIcon, Check, Users
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import SearchableSelect from '@/components/SearchableSelect';
 
 interface ReportModalProps {
   report?: any;
+  isCopy?: boolean;
   rencanaOptions: any[];
+  timOptions: any[];
   onClose: () => void;
   onSuccess: () => void;
 }
 
-export default function ReportModal({ report, rencanaOptions, onClose, onSuccess }: ReportModalProps) {
+export default function ReportModal({ report, isCopy, rencanaOptions, timOptions, onClose, onSuccess }: ReportModalProps) {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isFetchingPlans, setIsFetchingPlans] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [selectedTimId, setSelectedTimId] = useState(
+    report?.rencanaId ? rencanaOptions.find(r => r.id === report.rencanaId)?.timId || '' : ''
+  );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(report?.buktiUrl ? 'File Terlampir' : null);
+
+  const filteredPrograms = selectedTimId 
+    ? rencanaOptions.filter(r => r.timId === selectedTimId)
+    : rencanaOptions;
 
   const [uraianDasar, setUraianDasar] = useState('');
 
   const [formData, setFormData] = useState({
-    tanggal: report?.tanggal ? new Date(report.tanggal).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+    tanggal: (report && !isCopy) ? new Date(report.tanggal).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
     rencanaId: report?.rencanaId || '',
     kegiatan: report?.kegiatan || '',
     progress: report?.progress || '0%',
     capaian: report?.capaian || '',
-    buktiUrl: report?.buktiUrl || '',
+    buktiUrl: isCopy ? '' : (report?.buktiUrl || ''),
   });
 
   const getFileIcon = (url: string | null) => {
@@ -53,10 +63,17 @@ export default function ReportModal({ report, rencanaOptions, onClose, onSuccess
 
     setIsGenerating(true);
     try {
+      const selectedTim = timOptions.find(t => t.id === selectedTimId)?.nama;
+      const selectedRencana = rencanaOptions.find(r => r.id === formData.rencanaId)?.nama;
+
       const res = await fetch('/api/ai/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deskripsi: uraianDasar }),
+        body: JSON.stringify({ 
+          deskripsi: uraianDasar,
+          timContext: selectedTim,
+          rencanaContext: selectedRencana
+        }),
       });
       const data = await res.json();
       if (data.kegiatan && data.capaian) {
@@ -71,6 +88,24 @@ export default function ReportModal({ report, rencanaOptions, onClose, onSuccess
       showToast('AI sedang sibuk, coba lagi nanti.', 'error');
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleDraftFromPlans = async () => {
+    setIsFetchingPlans(true);
+    try {
+      const res = await fetch(`/api/ai/plans-to-draft?date=${formData.tanggal}`);
+      const data = await res.json();
+      if (data.draft) {
+        setUraianDasar(data.draft);
+        showToast('Berhasil menarik rencana harian!', 'success');
+      } else {
+        showToast('Belum ada rencana yang selesai (centang) untuk tanggal ini.', 'info');
+      }
+    } catch (error) {
+      showToast('Gagal menarik rencana.', 'error');
+    } finally {
+      setIsFetchingPlans(false);
     }
   };
 
@@ -167,8 +202,8 @@ export default function ReportModal({ report, rencanaOptions, onClose, onSuccess
     setLoading(true);
 
     try {
-      const url = report ? `/api/laporan/${report.id}` : '/api/laporan';
-      const method = report ? 'PUT' : 'POST';
+      const url = (report && !isCopy) ? `/api/laporan/${report.id}` : '/api/laporan';
+      const method = (report && !isCopy) ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
         method,
@@ -177,7 +212,7 @@ export default function ReportModal({ report, rencanaOptions, onClose, onSuccess
       });
 
       if (res.ok) {
-        showToast(report ? 'Laporan diperbarui!' : 'Laporan disimpan!', 'success');
+        showToast((report && !isCopy) ? 'Laporan diperbarui!' : 'Laporan disimpan!', 'success');
         onSuccess();
         onClose();
       }
@@ -206,13 +241,26 @@ export default function ReportModal({ report, rencanaOptions, onClose, onSuccess
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <SearchableSelect 
+            label="Tim Kerja"
+            options={timOptions}
+            value={selectedTimId}
+            onChange={(val) => {
+              setSelectedTimId(val);
+              setFormData({ ...formData, rencanaId: '' });
+            }}
+            placeholder="-- Semua Program --"
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', gridColumn: 'span 2' }}>
           <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
             <Target size={14} color="var(--primary)" />
-            Rencana Kerja
+            Program Kerja
           </label>
           <SearchableSelect 
             required
-            options={rencanaOptions}
+            options={filteredPrograms}
             value={formData.rencanaId}
             onChange={(val) => setFormData({ ...formData, rencanaId: val })}
             placeholder="Pilih Program..."
@@ -226,10 +274,22 @@ export default function ReportModal({ report, rencanaOptions, onClose, onSuccess
         borderRadius: '16px', 
         border: '1px solid rgba(59, 130, 246, 0.1)' 
       }}>
-        <label style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary)' }}>
-          <Sparkles size={16} className={isGenerating ? 'animate-pulse' : ''} />
-          Uraian Tugas Dasar
-        </label>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <label style={{ fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary)' }}>
+            <Sparkles size={16} className={isGenerating ? 'animate-pulse' : ''} />
+            Uraian Tugas Dasar
+          </label>
+          <button 
+            type="button" 
+            onClick={handleDraftFromPlans}
+            disabled={isFetchingPlans}
+            className="btn glass"
+            style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem', height: 'auto', border: '1px dashed var(--primary)', borderRadius: '8px' }}
+          >
+            {isFetchingPlans ? <Loader2 size={12} className="spin" /> : <BrainCircuit size={12} />}
+            <span>Draft dari Rencana</span>
+          </button>
+        </div>
         <textarea 
           rows={2}
           placeholder="Tuliskan kasar apa yang anda kerjakan... AI Magic akan memprosesnya"
@@ -284,19 +344,13 @@ export default function ReportModal({ report, rencanaOptions, onClose, onSuccess
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-          <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
-            Progres
-          </label>
-          <select 
-            required
+          <SearchableSelect 
+            label="Progres"
+            options={['0%', '25%', '50%', '75%', '100%'].map(p => ({ id: p, nama: p }))}
             value={formData.progress}
-            onChange={(e) => setFormData({ ...formData, progress: e.target.value })}
-            className="input-base"
-          >
-            {['0%', '25%', '50%', '75%', '100%'].map(p => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
+            onChange={(val) => setFormData({ ...formData, progress: val })}
+            required
+          />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
@@ -376,7 +430,7 @@ export default function ReportModal({ report, rencanaOptions, onClose, onSuccess
       <div style={{ marginTop: '0.5rem', display: 'flex', gap: '1rem' }}>
         <button type="button" onClick={onClose} className="btn glass" style={{ flex: 1 }}>Batal</button>
         <button type="submit" disabled={loading || uploading} className="btn btn-primary" style={{ flex: 2 }}>
-          {loading ? <Loader2 size={20} className="spin" /> : (report ? 'Update Laporan' : 'Simpan Laporan')}
+          {loading ? <Loader2 size={20} className="spin" /> : ((report && !isCopy) ? 'Update Laporan' : 'Simpan Laporan')}
         </button>
       </div>
     </form>

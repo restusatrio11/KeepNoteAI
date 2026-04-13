@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { masterRencana, laporan } from '@/db/schema';
 import { auth } from '@/auth';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 export async function PUT(
   req: NextRequest,
@@ -19,12 +19,13 @@ export async function PUT(
       return NextResponse.json({ error: 'Nama and Kode are required' }, { status: 400 });
     }
 
-    const result = await db.update(masterRencana)
+      const result = await db.update(masterRencana)
       .set({
         nama: data.nama,
         kode: data.kode.toUpperCase(),
+        timId: data.timId || null,
       })
-      .where(eq(masterRencana.id, id))
+      .where(and(eq(masterRencana.id, id), eq(masterRencana.userId, session.user.id)))
       .returning();
 
     if (result.length === 0) {
@@ -47,19 +48,19 @@ export async function DELETE(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    // Check if there are any reports linked to this rencana
+    // Check if there are any reports linked to this rencana (any user for robustness)
     const existingLaporan = await db.query.laporan.findFirst({
       where: eq(laporan.rencanaId, id),
     });
 
     if (existingLaporan) {
       return NextResponse.json({ 
-        error: 'Tidak dapat menghapus. Rencana ini memiliki laporan yang terkait.' 
+        error: 'Tidak dapat menghapus. Rencana ini sudah digunakan dalam laporan.' 
       }, { status: 400 });
     }
 
     const result = await db.delete(masterRencana)
-      .where(eq(masterRencana.id, id))
+      .where(and(eq(masterRencana.id, id), eq(masterRencana.userId, session.user.id)))
       .returning();
 
     if (result.length === 0) {
