@@ -199,14 +199,26 @@ export default function RencanaPage() {
       </header>
 
       {/* Tab Switcher */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '3rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem' }}>
+      <div style={{ 
+        display: 'flex', 
+        gap: '0.5rem', 
+        marginBottom: '2.5rem', 
+        borderBottom: '1px solid var(--border)', 
+        paddingBottom: '1rem',
+        overflowX: 'auto',
+        whiteSpace: 'nowrap',
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
+        WebkitOverflowScrolling: 'touch'
+      }}>
         <button 
           onClick={() => setActiveTab('history')}
           style={{ 
             display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.75rem 1.25rem', borderRadius: '12px',
             backgroundColor: activeTab === 'history' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
             color: activeTab === 'history' ? 'var(--primary)' : 'var(--text-muted)',
-            border: 'none', fontWeight: 700, cursor: 'pointer', transition: 'all 0.3s'
+            border: 'none', fontWeight: 700, cursor: 'pointer', transition: 'all 0.3s',
+            flexShrink: 0
           }}
         >
           <StickyNote size={18} />
@@ -218,7 +230,8 @@ export default function RencanaPage() {
             display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.75rem 1.25rem', borderRadius: '12px',
             backgroundColor: activeTab === 'master' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
             color: activeTab === 'master' ? 'var(--primary)' : 'var(--text-muted)',
-            border: 'none', fontWeight: 700, cursor: 'pointer', transition: 'all 0.3s'
+            border: 'none', fontWeight: 700, cursor: 'pointer', transition: 'all 0.3s',
+            flexShrink: 0
           }}
         >
           <Settings2 size={18} />
@@ -230,7 +243,8 @@ export default function RencanaPage() {
             display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.75rem 1.25rem', borderRadius: '12px',
             backgroundColor: activeTab === 'tim' ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
             color: activeTab === 'tim' ? 'var(--primary)' : 'var(--text-muted)',
-            border: 'none', fontWeight: 700, cursor: 'pointer', transition: 'all 0.3s'
+            border: 'none', fontWeight: 700, cursor: 'pointer', transition: 'all 0.3s',
+            flexShrink: 0
           }}
         >
           <UsersRound size={18} />
@@ -239,15 +253,16 @@ export default function RencanaPage() {
       </div>
 
       {/* Global Search Bar */}
-      <div className="card glass" style={{ marginBottom: '2rem', padding: '0.75rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-        <Search size={20} className="text-muted" />
-        <input 
-          type="text" 
-          placeholder={
-            activeTab === 'history' ? 'Cari di catatan sticky notes...' :
-            activeTab === 'master' ? 'Cari nama atau kode program...' :
-            'Cari nama atau keterangan tim...'
-          }
+      <div className="card glass" style={{ marginBottom: '2rem', padding: '0.75rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1, minWidth: '200px' }}>
+          <Search size={20} className="text-muted" />
+          <input 
+            type="text" 
+            placeholder={
+              activeTab === 'history' ? 'Cari di catatan sticky notes...' :
+              activeTab === 'master' ? 'Cari nama atau kode program...' :
+              'Cari nama atau keterangan tim...'
+            }
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           style={{ 
@@ -264,6 +279,7 @@ export default function RencanaPage() {
             <Trash2 size={16} />
           </button>
         )}
+        </div>
       </div>
 
       {activeTab === 'history' ? (

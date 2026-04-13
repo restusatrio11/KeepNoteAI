@@ -122,7 +122,7 @@ export default function LaporanPage() {
       </header>
 
       <div className="card glass" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '2rem', padding: '1.25rem' }}>
-        <div style={{ flex: 2, minWidth: '240px', position: 'relative' }}>
+        <div style={{ flex: '2 1 300px', position: 'relative' }}>
           <Search size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', opacity: 0.3 }} />
           <input 
             type="text" 
@@ -130,28 +130,28 @@ export default function LaporanPage() {
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="input-base"
-            style={{ paddingLeft: '2.75rem' }} 
+            style={{ paddingLeft: '2.75rem', width: '100%' }} 
           />
         </div>
         
-        <div style={{ flex: 1, minWidth: '200px', display: 'flex', gap: '0.5rem', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', padding: '0 1rem', borderRadius: '14px', border: '1px solid var(--border)' }}>
+        <div style={{ flex: '1 1 250px', display: 'flex', gap: '0.4rem', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', padding: '0 1rem', borderRadius: '14px', border: '1px solid var(--border)', justifyContent: 'center' }}>
           <Calendar size={16} color="var(--primary)" />
           <input 
             type="date" 
             value={fromDate}
             onChange={(e) => { setFromDate(e.target.value); setPage(1); }}
-            style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '0.85rem', outline: 'none', width: '100px' }} 
+            style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '0.8rem', outline: 'none', width: '105px' }} 
           />
           <span style={{ opacity: 0.2 }}>-</span>
           <input 
             type="date" 
             value={toDate}
             onChange={(e) => { setToDate(e.target.value); setPage(1); }}
-            style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '0.85rem', outline: 'none', width: '100px' }} 
+            style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '0.8rem', outline: 'none', width: '105px' }} 
           />
         </div>
 
-        <div style={{ flex: 1, minWidth: '200px' }}>
+        <div style={{ flex: '1 1 200px' }}>
           <SearchableSelect 
             options={filterOptions}
             value={filterRencana}
