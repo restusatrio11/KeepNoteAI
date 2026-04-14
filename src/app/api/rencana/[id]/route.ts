@@ -19,13 +19,15 @@ export async function PUT(
       return NextResponse.json({ error: 'Nama and Kode are required' }, { status: 400 });
     }
 
+      const userId = session.user.id;
+
       const result = await db.update(masterRencana)
       .set({
         nama: data.nama,
         kode: data.kode.toUpperCase(),
         timId: data.timId || null,
       })
-      .where(and(eq(masterRencana.id, id), eq(masterRencana.userId, session.user.id)))
+      .where(and(eq(masterRencana.id, id), eq(masterRencana.userId, userId as string)))
       .returning();
 
     if (result.length === 0) {
@@ -59,8 +61,10 @@ export async function DELETE(
       }, { status: 400 });
     }
 
+    const userId = session.user.id;
+
     const result = await db.delete(masterRencana)
-      .where(and(eq(masterRencana.id, id), eq(masterRencana.userId, session.user.id)))
+      .where(and(eq(masterRencana.id, id), eq(masterRencana.userId, userId as string)))
       .returning();
 
     if (result.length === 0) {

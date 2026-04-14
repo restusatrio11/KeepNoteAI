@@ -1,14 +1,10 @@
 import type { Metadata } from "next";
-import { Outfit } from "next/font/google"; // Return to Outfit
 import "./globals.css";
 import AuthProvider from "@/providers/AuthProvider";
 import { ToastProvider } from "@/providers/ToastProvider";
 import Navigation from "@/components/Navigation";
 
-const outfit = Outfit({
-  subsets: ["latin"],
-  variable: "--font-outfit",
-});
+
 
 export const metadata: Metadata = {
   title: "KeepNoteAI | Modern Reporting",
@@ -26,7 +22,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={outfit.variable} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
         <AuthProvider>
           <ToastProvider>
