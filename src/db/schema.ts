@@ -58,3 +58,21 @@ export const dailyPlanning = pgTable('daily_planning', {
   isDone: boolean('is_done').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+export const notulen = pgTable('notulen', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id).notNull(),
+  judul: text('judul').notNull(),
+  tanggal: date('tanggal').notNull(),
+  waktu: text('waktu'),
+  tempat: text('tempat'),
+  pemimpin: text('pemimpin'),
+  topik: text('topik'),
+  notulis: text('notulis'),
+  peserta: text('peserta'), // List of participants
+  konten: text('konten').notNull(), // JSON string for discussion points
+  undanganUrl: text('undangan_url'),
+  daftarHadirUrl: text('daftar_hadir_url'),
+  dokumentasiUrls: text('dokumentasi_urls'), // JSON string for multiple image URLs
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});

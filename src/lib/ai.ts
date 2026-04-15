@@ -236,3 +236,92 @@ Format Output (JSON):
     };
   }
 }
+
+export async function generateNotulenAI(rawNotes: string, metadata: { judul?: string; topik?: string }) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  const model = process.env.AI_MODEL || 'google/gemini-2.0-flash-exp:free';
+
+  if (!apiKey) {
+    throw new Error('OPENROUTER_API_KEY is not set');
+  }
+
+  const prompt = `Anda adalah asisten notulensi profesional. Tugas Anda adalah mengubah catatan rapat yang kasar/informal menjadi notulen yang rapi, profesional, dan enak dibaca dalam Bahasa Indonesia.
+
+Informasi Rapat:
+Judul: ${metadata.judul || 'Rapat'}
+Topik Utama: ${metadata.topik || '-'}
+
+Catatan Kasar:
+---
+${rawNotes}
+---
+
+Instruksi:
+1. Gunakan Bahasa Indonesia formal (EYD) yang sangat profesional dan sopan.
+2. Identifikasi poin-poin pembahasan utama secara teratur.
+3. Untuk setiap poin, jika ada keputusan atau solusi yang disebutkan, pisahkan sebagai "solusi" yang jelas.
+4. Buat ringkasan "kesimpulan" yang mencakup inti dari seluruh pertemuan secara eksekutif.
+5. Tambahkan "insights" berupa daftar poin penting atau rekomendasi strategis yang bisa diambil dari hasil rapat tersebut untuk kemajuan tim.
+6. Pastikan kosa kata yang digunakan mencerminkan standar profesionalitas tinggi (misal: menggunakan kata 'tersebut', 'berkenaan', 'implementasi', dsb).
+
+Format Output (JSON):
+{
+  "pembahasan": [
+    {
+      "topik": "Nama Topik/Agenda",
+      "items": [
+        {
+          "deskripsi": "Penjelasan detail poin pembahasan",
+          "solusi": "Langkah tindak lanjut atau keputusan yang diambil"
+        }
+      ]
+    }
+  ],
+  "kesimpulan": "Ringkasan eksekutif rapat...",
+  "insights": [
+    "Poin insight/rekomendasi 1",
+    "Poin insight/rekomendasi 2"
+  ]
+}`;
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://antigravity-reporting.com',
+      'X-Title': 'KeepNoteAI'
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: [
+        { role: 'system', content: 'Anda adalah pakar notulensi profesional.' },
+        { role: 'user', content: prompt }
+      ],
+      response_format: { type: 'json_object' }
+    })
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error('OpenRouter Error:', errorBody);
+    throw new Error('Failed to generate notulen with AI');
+  }
+
+  const data = await response.json();
+  
+  if (!data.choices || data.choices.length === 0) {
+    console.error('AI Provider Response Error:', data);
+    const apiError = data.error?.message || 'AI Provider returned no results.';
+    throw new Error(`${apiError} (Model: ${model})`);
+  }
+
+  const content = data.choices[0].message.content;
+  
+  try {
+    return JSON.parse(content);
+  } catch (e) {
+    console.error('Failed to parse AI JSON:', content);
+    throw new Error('AI output was not valid JSON. Please try again.');
+  }
+}

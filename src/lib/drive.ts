@@ -79,3 +79,20 @@ export async function uploadToDrive(file: Buffer, fileName: string, mimeType: st
   };
 }
 
+export async function getFileBuffer(fileId: string): Promise<Buffer> {
+  const drive = await getDriveClient();
+  const response = await drive.files.get({
+    fileId,
+    alt: 'media',
+  }, { responseType: 'arraybuffer' });
+  
+  return Buffer.from(response.data as ArrayBuffer);
+}
+
+export function extractFileIdFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  // Handle webViewLink format: https://drive.google.com/file/d/FILE_ID/view?usp=drivesdk
+  const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : null;
+}
+

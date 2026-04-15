@@ -26,27 +26,41 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   if (to) filters.push(lte(laporan.tanggal, to));
   const whereClause = and(...filters);
 
-  const [totalLaporan] = await db.select({ value: count() }).from(laporan).where(whereClause);
-  const [totalRencana] = await db.select({ value: count() }).from(masterRencana);
+  let totalLaporanCount = 0;
+  let totalRencanaCount = 0;
+  let activities: any[] = [];
+
+  try {
+    const [totalLaporan] = await db.select({ value: count() }).from(laporan).where(whereClause);
+    const [totalRencana] = await db.select({ value: count() }).from(masterRencana);
+    
+    totalLaporanCount = totalLaporan?.value || 0;
+    totalRencanaCount = totalRencana?.value || 0;
+
+    activities = await db
+      .select({
+        id: laporan.id,
+        tanggal: laporan.tanggal,
+        rencana: masterRencana.nama,
+        progress: laporan.progress,
+      })
+      .from(laporan)
+      .innerJoin(masterRencana, eq(laporan.rencanaId, masterRencana.id))
+      .where(whereClause)
+      .orderBy(desc(laporan.tanggal))
+      .limit(5);
+  } catch (error) {
+    console.error('Dashboard Data Fetch Error:', error);
+    // Silent fail - stats will show 0 and activities will be empty
+  }
 
   const stats = [
-    { label: 'Total Laporan', value: totalLaporan?.value || 0, icon: FileText, color: '#3b82f6' },
-    { label: 'Rencana Aktif', value: totalRencana?.value || 0, icon: Clock, color: '#f59e0b' },
-    { label: 'Tercapai', value: totalLaporan?.value || 0, icon: CheckCircle, color: '#10b981' },
+    { label: 'Total Laporan', value: totalLaporanCount, icon: FileText, color: '#3b82f6' },
+    { label: 'Rencana Aktif', value: totalRencanaCount, icon: Clock, color: '#f59e0b' },
+    { label: 'Tercapai', value: totalLaporanCount, icon: CheckCircle, color: '#10b981' },
   ];
 
-  const recentActivities = await db
-    .select({
-      id: laporan.id,
-      tanggal: laporan.tanggal,
-      rencana: masterRencana.nama,
-      progress: laporan.progress,
-    })
-    .from(laporan)
-    .innerJoin(masterRencana, eq(laporan.rencanaId, masterRencana.id))
-    .where(whereClause)
-    .orderBy(desc(laporan.tanggal))
-    .limit(5);
+  const recentActivities = activities;
 
   return (
     <div className="animate-in">
