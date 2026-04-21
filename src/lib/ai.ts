@@ -245,42 +245,43 @@ export async function generateNotulenAI(rawNotes: string, metadata: { judul?: st
     throw new Error('OPENROUTER_API_KEY is not set');
   }
 
-  const prompt = `Anda adalah asisten notulensi profesional. Tugas Anda adalah mengubah catatan rapat yang kasar/informal menjadi notulen yang rapi, profesional, dan enak dibaca dalam Bahasa Indonesia.
+  const prompt = `Anda adalah seorang Senior Strategic Planner dan Ahli Manajemen Kinerja Profesional. Tugas Anda adalah mentransformasi catatan rapat mentah menjadi Dokumen Notulen Strategis yang berfokus pada Capaian Kinerja, Akuntabilitas, dan Rencana Aksi Nyata.
 
 Informasi Rapat:
-Judul: ${metadata.judul || 'Rapat'}
-Topik Utama: ${metadata.topik || '-'}
+Subjek: ${metadata.judul || 'Rapat Koordinasi'}
+Agenda Utama: ${metadata.topik || 'Peningkatan Kinerja Operasional'}
 
-Catatan Kasar:
+Data Input (Catatan Kasar):
 ---
 ${rawNotes}
 ---
 
-Instruksi:
-1. Gunakan Bahasa Indonesia formal (EYD) yang sangat profesional dan sopan.
-2. Identifikasi poin-poin pembahasan utama secara teratur.
-3. Untuk setiap poin, jika ada keputusan atau solusi yang disebutkan, pisahkan sebagai "solusi" yang jelas.
-4. Buat ringkasan "kesimpulan" yang mencakup inti dari seluruh pertemuan secara eksekutif.
-5. Tambahkan "insights" berupa daftar poin penting atau rekomendasi strategis yang bisa diambil dari hasil rapat tersebut untuk kemajuan tim.
-6. Pastikan kosa kata yang digunakan mencerminkan standar profesionalitas tinggi (misal: menggunakan kata 'tersebut', 'berkenaan', 'implementasi', dsb).
+Instruksi Khusus (Wajib Diikuti):
+1. PERSONA: Gunakan sudut pandang seorang Perencana Profesional yang tajam, sistematis, dan solutif.
+2. DIKSI: Gunakan Bahasa Indonesia formal tingkat tinggi (bahasa korporat/birokrasi profesional). Hindari kata-kata santai. Gunakan istilah seperti 'Mengakselerasi', 'Parameter', 'Target Capaian', 'Kendala Strategis', 'Sinergitas', dan 'Optimalisasi'.
+3. STRUKTUR PEMBAHASAN:
+   - Bedah setiap topik menjadi narasi yang menjelaskan 'Situasi Saat Ini' dan 'Target/Solusi'.
+   - Konversikan setiap keputusan menjadi "Capaian Kinerja" yang dapat diukur.
+4. RINGKASAN EKSEKUTIF: Buat ringkasan yang fokus pada hasil rapat bagi keberlangsungan organisasi.
+5. INSIGHTS: Berikan 3-5 poin rekomendasi strategis sebagai seorang perencana untuk langkah ke depan.
 
 Format Output (JSON):
 {
   "pembahasan": [
     {
-      "topik": "Nama Topik/Agenda",
+      "topik": "Judul Agenda Strategis",
       "items": [
         {
-          "deskripsi": "Penjelasan detail poin pembahasan",
-          "solusi": "Langkah tindak lanjut atau keputusan yang diambil"
+          "deskripsi": "Narasi profesional mengenai poin yang dibahas (sangat rapi dan detail)",
+          "solusi": "Target Capaian / Rencana Aksi / Keputusan Strategis"
         }
       ]
     }
   ],
-  "kesimpulan": "Ringkasan eksekutif rapat...",
+  "kesimpulan": "Ringkasan Eksekutif Perencana mengenai hasil dan dampak rapat...",
   "insights": [
-    "Poin insight/rekomendasi 1",
-    "Poin insight/rekomendasi 2"
+    "Rekomendasi Strategis 1 untuk Akselerasi Kinerja",
+    "Rekomendasi Strategis 2 untuk Mitigasi Risiko"
   ]
 }`;
 
@@ -295,10 +296,9 @@ Format Output (JSON):
     body: JSON.stringify({
       model: model,
       messages: [
-        { role: 'system', content: 'Anda adalah pakar notulensi profesional.' },
+        { role: 'system', content: 'Anda adalah Senior Strategic Planner yang ahli dalam merancang capaian kinerja dan notulen profesional.' },
         { role: 'user', content: prompt }
-      ],
-      response_format: { type: 'json_object' }
+      ]
     })
   });
 
@@ -316,8 +316,11 @@ Format Output (JSON):
     throw new Error(`${apiError} (Model: ${model})`);
   }
 
-  const content = data.choices[0].message.content;
+  let content = data.choices[0].message.content;
   
+  // Clean up content if AI wrapped it in markdown code block (e.g. ```json ... ```)
+  content = content.replace(/```json/g, '').replace(/```/g, '').trim();
+
   try {
     return JSON.parse(content);
   } catch (e) {

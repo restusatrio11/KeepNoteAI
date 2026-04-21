@@ -423,14 +423,14 @@ export default function EditNotulenPage({ params }: { params: Promise<{ id: stri
                   </div>
                   
                   <div style={{ paddingLeft: '1rem', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                    {aiResult?.pembahasan.map((p: any, idx: number) => (
+                    {aiResult?.pembahasan?.map((p: any, idx: number) => (
                       <div key={idx}>
                         <h4 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1.25rem', color: 'var(--primary)', display: 'flex', gap: '0.75rem' }}>
                           <span style={{ opacity: 0.5 }}>{idx + 1}.</span>
                           {p.topik}
                         </h4>
                         <div style={{ paddingLeft: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                          {p.items.map((item: any, i: number) => (
+                          {p.items?.map((item: any, i: number) => (
                             <div key={i}>
                               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
                                 <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--primary)', marginTop: '0.6rem', flexShrink: 0 }} />
@@ -456,6 +456,32 @@ export default function EditNotulenPage({ params }: { params: Promise<{ id: stri
                     ))}
                   </div>
                </section>
+               
+               {/* Insights & Rekomendasi */}
+               {aiResult?.insights && aiResult.insights.length > 0 && (
+                 <section>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
+                      <div style={{ width: '8px', height: '24px', backgroundColor: 'var(--primary)', borderRadius: '4px' }} />
+                      <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>III. INSIGHTS & REKOMENDASI</h3>
+                    </div>
+                    
+                    <div style={{ paddingLeft: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem' }}>
+                      {aiResult.insights.map((insight: string, idx: number) => (
+                        <div key={idx} style={{ 
+                          padding: '1.5rem', 
+                          backgroundColor: 'rgba(59, 130, 246, 0.05)', 
+                          borderRadius: '16px', 
+                          border: '1px solid rgba(59, 130, 246, 0.1)',
+                          display: 'flex',
+                          gap: '1rem'
+                        }}>
+                          <Sparkles size={20} color="var(--primary)" style={{ flexShrink: 0 }} />
+                          <p style={{ fontSize: '0.95rem', fontWeight: 600, lineHeight: '1.5' }}>{insight}</p>
+                        </div>
+                      ))}
+                    </div>
+                 </section>
+               )}
             </div>
           </motion.div>
         )}
