@@ -44,16 +44,11 @@ function findBestRencana(rencanaList: any[], hint: string) {
   return best;
 }
 
-async function callAI(messages: any[]) {
+async function callAI(messages: any[], expectJson = true) {
   const body: any = {
     model: process.env.AI_MODEL || 'openai/gpt-oss-120b:free',
     messages,
   };
-  const lastMsg = messages[messages.length - 1];
-  const hasImage = Array.isArray(lastMsg?.content) && lastMsg.content.some((c: any) => c.type === 'image_url');
-  if (!hasImage) {
-    body.response_format = { type: 'json_object' };
-  }
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -63,9 +58,22 @@ async function callAI(messages: any[]) {
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  const content = data.choices?.[0]?.message?.content || '{}';
-  const cleaned = content.replace(/```json\s*/gi, '').replace(/```\s*$/g, '').trim();
-  return JSON.parse(cleaned);
+  const raw = data.choices?.[0]?.message?.content || '';
+  if (!expectJson) return { kegiatan: raw };
+  const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*$/g, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const obj: any = {};
+    const matchK = cleaned.match(/"kegiatan"\s*:\s*"([^"]+)"/);
+    if (matchK) obj.kegiatan = matchK[1];
+    const matchC = cleaned.match(/"capaian"\s*:\s*"([^"]+)"/);
+    if (matchC) obj.capaian = matchC[1];
+    const matchR = cleaned.match(/"rencanaHint"\s*:\s*"([^"]+)"/);
+    if (matchR) obj.rencanaHint = matchR[1];
+    if (obj.kegiatan || obj.rencanaHint) return obj;
+    return { kegiatan: cleaned };
+  }
 }
 
 export async function POST(req: NextRequest) {
