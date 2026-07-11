@@ -6,6 +6,8 @@ export const users = pgTable('users', {
   email: text('email').notNull().unique(),
   password: text('password').notNull(),
   telegramChatId: text('telegram_chat_id'),
+  verificationCode: text('verification_code'),
+  verificationExpiry: timestamp('verification_expiry'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

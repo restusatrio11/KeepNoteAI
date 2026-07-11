@@ -152,11 +152,13 @@ export default function SettingsPage() {
 
 function TelegramSection() {
   const { showToast } = useToast();
-  const [data, setData] = useState<{ link: string; isLinked: boolean; chatId: string | null; botUsername: string } | null>(null);
+  const [data, setData] = useState<{ code: string; isLinked: boolean; chatId: string | null; botUsername: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showCode, setShowCode] = useState(false);
 
-  async function fetchLink() {
+  async function fetchCode() {
     setLoading(true);
+    setShowCode(true);
     try {
       const res = await fetch('/api/telegram/link');
       if (res.ok) setData(await res.json());
@@ -168,11 +170,12 @@ function TelegramSection() {
     try {
       await fetch('/api/telegram/link', { method: 'DELETE' });
       setData(prev => prev ? { ...prev, isLinked: false, chatId: null } : null);
+      setShowCode(false);
       showToast('Koneksi Telegram diputuskan.', 'success');
     } catch { showToast('Gagal memutuskan koneksi.', 'error'); }
   }
 
-  useEffect(() => { fetchLink(); }, []);
+  useEffect(() => { fetchCode(); }, []);
 
   if (loading) return <div style={{ textAlign: 'center', padding: '1rem' }}><Loader2 className="spin" /></div>;
 
@@ -205,20 +208,25 @@ function TelegramSection() {
           }}>
             <p style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>Langkah-langkah:</p>
             <ol style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingLeft: '1.25rem' }}>
-              <li>Klik tombol di bawah untuk generate link</li>
-              <li>Klik link yang muncul untuk membuka Telegram</li>
-              <li>Klik "Start" atau kirim /start di chat bot</li>
+              <li>Klik <strong>"Generate Kode"</strong> di bawah</li>
+              <li>Buka Telegram, chat ke <strong>@{data?.botUsername || 'KipappAIbot'}</strong></li>
+              <li>Ketik <code>/link KODE</code> (ganti KODE dengan kode yang muncul)</li>
             </ol>
           </div>
-          <button onClick={fetchLink} disabled={loading} className="btn btn-primary">
-            <Link2 size={16} /> Generate Link Telegram
+          <button onClick={fetchCode} disabled={loading} className="btn btn-primary">
+            <Link2 size={16} /> Generate Kode
           </button>
-          {data?.link && (
-            <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '10px', wordBreak: 'break-all' }}>
-              <p style={{ fontSize: '0.8rem', marginBottom: '0.5rem', opacity: 0.6 }}>Klik link ini di HP kamu:</p>
-              <a href={data.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', fontWeight: 700, fontSize: '0.95rem' }}>
-                {data.link}
-              </a>
+          {showCode && data?.code && (
+            <div style={{ marginTop: '1rem', padding: '1.25rem', backgroundColor: 'rgba(59,130,246,0.1)', borderRadius: '12px', border: '2px dashed var(--primary)', textAlign: 'center' }}>
+              <p style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '0.5rem' }}>Kirim kode ini ke bot Telegram:</p>
+              <p style={{ fontSize: '2.5rem', fontWeight: 900, letterSpacing: '8px', color: 'var(--primary)', fontFamily: 'monospace' }}>{data.code}</p>
+              <p style={{ fontSize: '0.75rem', opacity: 0.4, marginTop: '0.5rem' }}>Berlaku 5 menit</p>
+              <p style={{ fontSize: '0.8rem', marginTop: '0.75rem' }}>
+                📱 Buka <a href={`https://t.me/${data.botUsername}`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', fontWeight: 700 }}>t.me/{data.botUsername}</a> lalu ketik:
+              </p>
+              <code style={{ display: 'inline-block', padding: '0.5rem 1rem', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: '8px', fontSize: '1rem', marginTop: '0.5rem' }}>
+                /link {data.code}
+              </code>
             </div>
           )}
         </div>

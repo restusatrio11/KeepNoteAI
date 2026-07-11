@@ -1,43 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { users, masterRencana, laporan } from '@/db/schema';
-import { eq, like } from 'drizzle-orm';
-import crypto from 'crypto';
+import { eq, and, gt } from 'drizzle-orm';
 
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const LINK_SECRET = process.env.TELEGRAM_LINK_SECRET || process.env.AUTH_SECRET || 'default-secret';
 
-function tgFetch(method: string, body: any) {
-  return fetch(`https://api.telegram.org/bot${TG_TOKEN}/${method}`, {
+function sendMsg(chatId: string | number, text: string, extra?: any) {
+  return fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'Markdown', ...extra }),
   });
 }
 
-function sendMsg(chatId: string | number, text: string, extra?: any) {
-  return tgFetch('sendMessage', { chat_id: String(chatId), text, parse_mode: 'Markdown', ...extra });
-}
-
-function generateDeepLink(userId: string): string {
-  const ts = Date.now().toString();
-  const payload = `${userId}:${ts}`;
-  const hmac = crypto.createHmac('sha256', LINK_SECRET).update(payload).digest('hex').substring(0, 10);
-  const param = Buffer.from(`${payload}:${hmac}`).toString('base64url');
-  const botUser = process.env.TELEGRAM_BOT_USERNAME || 'your_bot';
-  return `https://t.me/${botUser}?start=${param}`;
-}
-
-async function verifyDeepLink(param: string): Promise<string | null> {
-  try {
-    const decoded = Buffer.from(param, 'base64url').toString();
-    const [userId, ts, hmac] = decoded.split(':');
-    if (!userId || !ts || !hmac) return null;
-    const expected = crypto.createHmac('sha256', LINK_SECRET).update(`${userId}:${ts}`).digest('hex').substring(0, 10);
-    if (hmac !== expected) return null;
-    if (Date.now() - parseInt(ts) > 10 * 60 * 1000) return null;
-    return userId;
-  } catch { return null; }
+function tgFetch(method: string, body: any) {
+  return fetch(`https://api.telegram.org/bot${TG_TOKEN}/${method}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
 }
 
 async function getUser(chatId: string) {
@@ -94,16 +73,32 @@ export async function POST(req: NextRequest) {
 
   // --- COMMAND HANDLERS ---
   if (text.startsWith('/')) {
-    const [cmd, ...args] = text.split(' ');
-    const param = args.join(' ');
+    const parts = text.split(' ');
+    const cmd = parts[0];
+    const param = parts.slice(1).join(' ').trim();
 
-    if (cmd === '/start' && param) {
-      const userId = await verifyDeepLink(param);
-      if (userId) {
-        await db.update(users).set({ telegramChatId: chatId }).where(eq(users.id, userId as any));
-        await sendMsg(chatId, '✅ Akun Telegram berhasil dihubungkan!\n\nSekarang kamu bisa kirim foto, dokumen, atau teks kegiatan, dan saya akan otomatis membuat laporan untukmu.');
+    // /link <kode> — link akun via kode verifikasi
+    if (cmd === '/link' && param) {
+      const [found] = await db.select().from(users)
+        .where(and(
+          eq(users.verificationCode, param),
+          gt(users.verificationExpiry as any, new Date())
+        ))
+        .limit(1);
+
+      if (found) {
+        await db.update(users).set({
+          telegramChatId: chatId,
+          verificationCode: null as any,
+          verificationExpiry: null as any,
+        }).where(eq(users.id, found.id as any));
+
+        await sendMsg(chatId,
+          `✅ *Berhasil terhubung!* Halo *${found.name}*!\n\n` +
+          `Sekarang kirim foto, dokumen, atau teks kegiatan untuk membuat laporan otomatis.`
+        );
       } else {
-        await sendMsg(chatId, '❌ Link tidak valid atau sudah kedaluwarsa. Generate ulang dari halaman Settings.');
+        await sendMsg(chatId, '❌ Kode tidak valid atau sudah kedaluwarsa. Generate ulang dari halaman Settings.');
       }
       return NextResponse.json({ ok: true });
     }
@@ -111,28 +106,41 @@ export async function POST(req: NextRequest) {
     if (cmd === '/start') {
       const existing = await getUser(chatId);
       if (existing) {
-        await sendMsg(chatId, `👋 Halo *${existing.name}*! Akun kamu sudah terhubung. Kirim foto, dokumen, atau teks kegiatan untuk membuat laporan.`);
+        await sendMsg(chatId, `👋 Halo *${existing.name}*! Akun sudah terhubung. Kirim kegiatan untuk membuat laporan.`);
       } else {
-        await sendMsg(chatId, '👋 Halo! Untuk menggunakan bot ini:\n\n1. Buka *Settings* di web KipApp\n2. Klik *"Hubungkan dengan Telegram"*\n3. Klik link yang muncul\n\nAtau kirim /help untuk bantuan.');
+        await sendMsg(chatId,
+          '👋 Halo! Untuk menghubungkan akun:\n\n' +
+          '1. Buka *Settings* di web KipApp\n' +
+          '2. Klik *"Generate Kode"*\n' +
+          '3. Ketik /link <kode> di sini\n\n' +
+          'Contoh: `/link ABC123`'
+        );
       }
       return NextResponse.json({ ok: true });
     }
 
     if (cmd === '/help') {
-      await sendMsg(chatId, '📋 *Cara Penggunaan Bot*\n\n📸 *Kirim Foto/Dokumen* — Saya analisis + buat laporan\n📝 *Kirim Teks* — Deskripsikan kegiatan\n🔗 /status — Cek status koneksi\n🔌 /unlink — Putuskan koneksi');
+      await sendMsg(chatId,
+        '📋 *Bantuan*\n\n' +
+        '🔗 /link KODE — Hubungkan akun\n' +
+        '🔍 /status — Cek status koneksi\n' +
+        '🔌 /unlink — Putuskan koneksi\n\n' +
+        '📸 Kirim *foto/dokumen* — Analisis + buat laporan\n' +
+        '📝 Kirim *teks* — Deskripsikan kegiatan'
+      );
       return NextResponse.json({ ok: true });
     }
 
     if (cmd === '/status') {
       const user = await getUser(chatId);
       if (user) await sendMsg(chatId, `✅ Terhubung sebagai *${user.name}* (${user.email})`);
-      else await sendMsg(chatId, '❌ Belum terhubung. Buka Settings > Hubungkan dengan Telegram.');
+      else await sendMsg(chatId, '❌ Belum terhubung. Ketik /start untuk bantuan.');
       return NextResponse.json({ ok: true });
     }
 
     if (cmd === '/unlink') {
       await db.update(users).set({ telegramChatId: null as any }).where(eq(users.telegramChatId, chatId));
-      await sendMsg(chatId, '🔌 Akun Telegram berhasil diputuskan.');
+      await sendMsg(chatId, '🔌 Akun berhasil diputuskan.');
       return NextResponse.json({ ok: true });
     }
 
@@ -141,25 +149,22 @@ export async function POST(req: NextRequest) {
 
   // --- AUTH CHECK ---
   const user = await getUser(chatId);
-  if (!user) {
-    // Silently ignore non-linked users
-    return NextResponse.json({ ok: true });
-  }
+  if (!user) return NextResponse.json({ ok: true });
 
-  // --- PHOTO HANDLER ---
+  // --- PHOTO ---
   if (msg.photo) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
     await handleFile(chatId, user, fileId, caption);
     return NextResponse.json({ ok: true });
   }
 
-  // --- DOCUMENT HANDLER ---
+  // --- DOCUMENT ---
   if (msg.document) {
     await handleFile(chatId, user, msg.document.file_id, caption);
     return NextResponse.json({ ok: true });
   }
 
-  // --- TEXT HANDLER ---
+  // --- TEXT ---
   if (text) {
     await handleText(chatId, user, text);
     return NextResponse.json({ ok: true });
@@ -170,7 +175,6 @@ export async function POST(req: NextRequest) {
 
 async function handleFile(chatId: string, user: any, fileId: string, caption: string) {
   await sendMsg(chatId, '⏳ Mengunduh dan menganalisis file...');
-
   try {
     const fileRes = await tgFetch('getFile', { file_id: fileId });
     const fileData = await fileRes.json();
@@ -178,7 +182,6 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       await sendMsg(chatId, '❌ Gagal mengunduh file.');
       return;
     }
-
     const fileUrl = `https://api.telegram.org/file/bot${TG_TOKEN}/${fileData.result.file_path}`;
     const resp = await fetch(fileUrl);
     const buffer = Buffer.from(await resp.arrayBuffer());
@@ -191,17 +194,8 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
     await sendMsg(chatId, '🧠 AI sedang menganalisis...');
 
     const aiResult = await callAI([
-      {
-        role: 'system',
-        content: 'Analyze the work document/image. Return JSON: { "kegiatan": "professional activity in Indonesian", "capaian": "achievement description in Indonesian", "rencanaHint": "suggested program name" }'
-      },
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: caption || 'Analyze this work activity.' },
-          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } }
-        ]
-      }
+      { role: 'system', content: 'Analyze the work document/image. Return JSON: { "kegiatan": "professional activity in Indonesian", "capaian": "achievement description in Indonesian", "rencanaHint": "suggested program name" }' },
+      { role: 'user', content: [{ type: 'text', text: caption || 'Analyze this work activity.' }, { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } }] }
     ]);
 
     if (!aiResult.kegiatan) {
@@ -213,10 +207,7 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
     const rencana = findBestRencana(rencanaList, aiResult.rencanaHint || aiResult.kegiatan);
 
     if (!rencana) {
-      await sendMsg(chatId,
-        `📋 *Hasil Analisis:*\n\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || '-'}\n\n` +
-        '⚠️ Tidak ada Rencana Kerja yang cocok. Buat dulu di web > Rencana.'
-      );
+      await sendMsg(chatId, `📋 *Hasil Analisis:*\n\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || '-'}\n\n⚠️ Tidak ada Rencana Kerja yang cocok. Buat dulu di web > Rencana.`);
       return;
     }
 
@@ -225,36 +216,22 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
     let buktiUrls = '';
     try {
       const { uploadToDrive } = await import('@/lib/drive');
-      const { getUserSettings } = await import('@/lib/drive');
-      // Get user's drive folder
       const [settings] = await db.select().from((await import('@/db/schema')).userSettings)
         .where(eq((await import('@/db/schema')).userSettings.userId, user.id as any)).limit(1);
-      
-      // Upload via drive lib directly
       if (settings?.driveFolderId) {
         const result = await uploadToDrive(buffer, filePath.split('/').pop() || 'file', mime, settings.driveFolderId);
         if (result?.link) buktiUrls = JSON.stringify([result.link]);
       }
-    } catch (e) {
-      console.error('Upload error:', e);
-    }
+    } catch (e) { console.error('Upload error:', e); }
 
     const today = new Date().toISOString().split('T')[0];
     await db.insert(laporan).values({
-      userId: user.id,
-      tanggalMulai: today,
-      tanggalSelesai: today,
-      rencanaId: rencana.id,
-      kegiatan: aiResult.kegiatan,
-      progress: 100,
-      capaian: aiResult.capaian || 'Tercapai sesuai target.',
+      userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
+      kegiatan: aiResult.kegiatan, progress: 100, capaian: aiResult.capaian || 'Tercapai sesuai target.',
       buktiUrls: buktiUrls || null,
     });
 
-    await sendMsg(chatId,
-      `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || 'Tercapai'}\n*Progres:* 100%\n\n📊 Lihat di web: ${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/laporan`
-    );
-
+    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || 'Tercapai'}\n*Progres:* 100%\n\n📊 Lihat di web: ${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/laporan`);
   } catch (e) {
     console.error('File handler error:', e);
     await sendMsg(chatId, '❌ Terjadi kesalahan. Coba lagi nanti.');
@@ -263,13 +240,9 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
 
 async function handleText(chatId: string, user: any, text: string) {
   await sendMsg(chatId, '⏳ Memproses deskripsi kegiatan...');
-
   try {
     const aiResult = await callAI([
-      {
-        role: 'system',
-        content: 'Convert casual work descriptions into professional Indonesian. Return JSON: { "kegiatan": "professional activity description", "capaian": "achievement description", "rencanaHint": "suggested program name matching the work" }'
-      },
+      { role: 'system', content: 'Convert casual work descriptions into professional Indonesian. Return JSON: { "kegiatan": "professional activity description", "capaian": "achievement description", "rencanaHint": "suggested program name matching the work" }' },
       { role: 'user', content: text }
     ]);
 
@@ -282,28 +255,17 @@ async function handleText(chatId: string, user: any, text: string) {
     const rencana = findBestRencana(rencanaList, aiResult.rencanaHint || aiResult.kegiatan);
 
     if (!rencana) {
-      await sendMsg(chatId,
-        `📋 *Hasil Analisis:*\n\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || '-'}\n\n` +
-        '⚠️ Tidak ada Rencana Kerja yang cocok. Buat dulu di web > Rencana.'
-      );
+      await sendMsg(chatId, `📋 *Hasil Analisis:*\n\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || '-'}\n\n⚠️ Tidak ada Rencana Kerja yang cocok. Buat dulu di web > Rencana.`);
       return;
     }
 
     const today = new Date().toISOString().split('T')[0];
     await db.insert(laporan).values({
-      userId: user.id,
-      tanggalMulai: today,
-      tanggalSelesai: today,
-      rencanaId: rencana.id,
-      kegiatan: aiResult.kegiatan,
-      progress: 100,
-      capaian: aiResult.capaian || 'Tercapai sesuai target.',
+      userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
+      kegiatan: aiResult.kegiatan, progress: 100, capaian: aiResult.capaian || 'Tercapai sesuai target.',
     });
 
-    await sendMsg(chatId,
-      `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || 'Tercapai'}\n*Progres:* 100%\n\n📊 Lihat di web: ${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/laporan`
-    );
-
+    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || 'Tercapai'}\n*Progres:* 100%\n\n📊 Lihat di web: ${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/laporan`);
   } catch (e) {
     console.error('Text handler error:', e);
     await sendMsg(chatId, '❌ Terjadi kesalahan. Coba lagi nanti.');
