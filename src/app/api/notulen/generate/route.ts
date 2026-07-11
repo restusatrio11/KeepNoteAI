@@ -1,21 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateNotulenAI } from '@/lib/ai';
+import { generateMeetingNotes, processMeetingAudio } from '@/lib/ai';
 import { auth } from '@/auth';
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    const { rawNotes, metadata } = await req.json();
+    const { rawNotes, audio, contentType, metadata } = await req.json();
 
-    if (!rawNotes) {
-      return NextResponse.json({ error: 'Catatan kasar diperlukan' }, { status: 400 });
+    let result;
+    if (audio && contentType) {
+      result = await processMeetingAudio(audio, contentType, metadata || {});
+    } else if (rawNotes) {
+      result = await generateMeetingNotes(rawNotes, metadata || {});
+    } else {
+      return NextResponse.json({ error: 'Catatan kasar atau rekaman audio diperlukan' }, { status: 400 });
     }
-
-    const result = await generateNotulenAI(rawNotes, metadata || {});
 
     return NextResponse.json({ result });
   } catch (error: any) {

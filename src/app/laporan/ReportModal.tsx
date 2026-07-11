@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { 
-  Calendar, Target, Activity, CheckCircle, 
-  Image as ImageIcon, Loader2, Sparkles, UploadCloud, X,
-  BrainCircuit, Wand2, FileText, Video as VideoIcon, Check, Users
+  Calendar, Target, Activity, CheckCircle, Clock, Plus, X,
+  Image as ImageIcon, Loader2, Sparkles, UploadCloud,
+  BrainCircuit, Wand2, FileText, Video as VideoIcon, Check, AlertTriangle
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import SearchableSelect from '@/components/SearchableSelect';
@@ -20,7 +20,7 @@ interface ReportModalProps {
 
 export default function ReportModal({ report, isCopy, rencanaOptions, timOptions, onClose, onSuccess }: ReportModalProps) {
   const { showToast } = useToast();
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFetchingPlans, setIsFetchingPlans] = useState(false);
@@ -29,7 +29,6 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
     report?.rencanaId ? rencanaOptions.find(r => r.id === report.rencanaId)?.timId || '' : ''
   );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadedFileName, setUploadedFileName] = useState<string | null>(report?.buktiUrl ? 'File Terlampir' : null);
 
   const filteredPrograms = selectedTimId 
     ? rencanaOptions.filter(r => r.timId === selectedTimId)
@@ -37,14 +36,32 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
 
   const [uraianDasar, setUraianDasar] = useState('');
 
+  const parseBuktiUrls = (val: string | null | undefined): string[] => {
+    if (!val) return [];
+    try { return JSON.parse(val); } catch { return val ? [val] : []; }
+  };
+
   const [formData, setFormData] = useState({
-    tanggal: (report && !isCopy) ? new Date(report.tanggal).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+    tanggalMulai: (report && !isCopy) ? new Date(report.tanggalMulai || report.tanggal).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+    tanggalSelesai: (report && !isCopy) ? new Date(report.tanggalSelesai || report.tanggal).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+    jamMulai: (report && !isCopy) ? (report.jamMulai || '') : '',
+    jamSelesai: (report && !isCopy) ? (report.jamSelesai || '') : '',
     rencanaId: report?.rencanaId || '',
     kegiatan: report?.kegiatan || '',
-    progress: report?.progress || '0%',
+    progress: report?.progress ?? 100,
     capaian: report?.capaian || '',
-    buktiUrl: isCopy ? '' : (report?.buktiUrl || ''),
+    buktiUrls: isCopy ? '' : (report?.buktiUrls || report?.buktiUrl || ''),
+    masukanSkp: (report && !isCopy) ? (report.masukanSkp || '') : '',
   });
+
+  const selectedRencana = rencanaOptions.find(r => r.id === formData.rencanaId);
+
+  const [buktiLinkList, setBuktiLinkList] = useState<string[]>(parseBuktiUrls(formData.buktiUrls));
+  const [newBuktiLink, setNewBuktiLink] = useState('');
+
+  useEffect(() => {
+    setFormData(prev => ({ ...prev, buktiUrls: JSON.stringify(buktiLinkList) }));
+  }, [buktiLinkList]);
 
   const getFileIcon = (url: string | null) => {
     if (!url) return <UploadCloud size={16} />;
@@ -94,7 +111,7 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
   const handleDraftFromPlans = async () => {
     setIsFetchingPlans(true);
     try {
-      const res = await fetch(`/api/ai/plans-to-draft?date=${formData.tanggal}`);
+      const res = await fetch(`/api/ai/plans-to-draft?date=${formData.tanggalMulai}`);
       const data = await res.json();
       if (data.draft) {
         setUraianDasar(data.draft);
@@ -115,7 +132,6 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
 
     setSelectedFile(file);
     setUploading(true);
-    setUploadedFileName(file.name);
     
     const body = new FormData();
     body.append('file', file);
@@ -129,20 +145,30 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
       });
       const data = await res.json();
       if (data.link) {
-        setFormData(prev => ({ ...prev, buktiUrl: data.link }));
+        setBuktiLinkList(prev => [...prev, data.link]);
         showToast('File berhasil diunggah ke Drive!', 'success');
       }
     } catch (error) {
       showToast('Gagal mengunggah file.', 'error');
-      setUploadedFileName(null);
-      setSelectedFile(null);
     } finally {
       setUploading(false);
     }
   };
 
+  const handleAddBuktiLink = () => {
+    const url = newBuktiLink.trim();
+    if (!url) return;
+    try { new URL(url); } catch { showToast('URL tidak valid', 'error'); return; }
+    setBuktiLinkList(prev => [...prev, url]);
+    setNewBuktiLink('');
+  };
+
+  const handleRemoveBuktiLink = (index: number) => {
+    setBuktiLinkList(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handleAnalyzeImage = async () => {
-    if (!selectedFile && !formData.buktiUrl) {
+    if (!selectedFile && buktiLinkList.length === 0) {
       showToast('Unggah foto terlebih dahulu!', 'error');
       return;
     }
@@ -153,8 +179,6 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
 
     setIsAnalyzing(true);
     try {
-      // If we have the raw file, use it. Otherwise we'd need to fetch from URL which is harder.
-      // We assume the user just uploaded it.
       let base64 = '';
       let contentType = '';
 
@@ -199,27 +223,68 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    setSaving(true);
+
+    const payload = {
+      ...formData,
+      buktiUrls: JSON.stringify(buktiLinkList),
+    };
 
     try {
       const url = (report && !isCopy) ? `/api/laporan/${report.id}` : '/api/laporan';
-      const method = (report && !isCopy) ? 'PUT' : 'POST';
+      const method = (report && !isCopy) ? 'PATCH' : 'POST';
 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
-
+      const data = await res.json();
       if (res.ok) {
-        showToast((report && !isCopy) ? 'Laporan diperbarui!' : 'Laporan disimpan!', 'success');
+        showToast(isCopy ? 'Laporan berhasil disalin!' : 'Laporan berhasil disimpan!', 'success');
         onSuccess();
         onClose();
+      } else {
+        showToast(data.error || 'Gagal menyimpan laporan', 'error');
       }
     } catch (error) {
-      showToast('Gagal menyimpan laporan.', 'error');
+      showToast('Terjadi kesalahan koneksi', 'error');
     } finally {
-      setLoading(false);
+      setSaving(false);
+    }
+  };
+
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewResult, setReviewResult] = useState<{ isAppropriate: boolean; feedback: string; suggestions: string } | null>(null);
+
+  const handleReviewAI = async () => {
+    if (!formData.kegiatan || !formData.capaian) {
+      showToast('Lengkapi kegiatan dan capaian untuk direview', 'info');
+      return;
+    }
+
+    setReviewing(true);
+    try {
+      const res = await fetch('/api/ai/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kegiatan: formData.kegiatan,
+          progress: String(formData.progress),
+          capaian: formData.capaian
+        })
+      });
+      const data = await res.json();
+      if (data.isAppropriate !== undefined) {
+        setReviewResult(data);
+        showToast('Review AI Selesai', 'success');
+      } else {
+        showToast(data.error || 'Gagal mereview laporan', 'error');
+      }
+    } catch (error) {
+      showToast('Gagal terhubung ke AI Supervisor', 'error');
+    } finally {
+      setReviewing(false);
     }
   };
 
@@ -229,17 +294,61 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
           <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
             <Calendar size={14} color="var(--primary)" />
-            Tanggal
+            Tanggal Mulai
           </label>
           <input 
             type="date"
             required
-            value={formData.tanggal}
-            onChange={(e) => setFormData({ ...formData, tanggal: e.target.value })}
+            value={formData.tanggalMulai}
+            onChange={(e) => setFormData({ ...formData, tanggalMulai: e.target.value })}
             className="input-base"
           />
         </div>
 
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
+            <Calendar size={14} color="var(--primary)" />
+            Tanggal Selesai
+          </label>
+          <input 
+            type="date"
+            required
+            value={formData.tanggalSelesai}
+            onChange={(e) => setFormData({ ...formData, tanggalSelesai: e.target.value })}
+            className="input-base"
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
+            <Clock size={14} color="var(--primary)" />
+            Jam Mulai
+          </label>
+          <input 
+            type="time"
+            value={formData.jamMulai}
+            onChange={(e) => setFormData({ ...formData, jamMulai: e.target.value })}
+            className="input-base"
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
+            <Clock size={14} color="var(--primary)" />
+            Jam Selesai
+          </label>
+          <input 
+            type="time"
+            value={formData.jamSelesai}
+            onChange={(e) => setFormData({ ...formData, jamSelesai: e.target.value })}
+            className="input-base"
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
           <SearchableSelect 
             label="Tim Kerja"
@@ -253,7 +362,7 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
           />
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', gridColumn: 'span 2' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
           <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
             <Target size={14} color="var(--primary)" />
             Program Kerja
@@ -267,6 +376,19 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
           />
         </div>
       </div>
+
+      {selectedRencana?.iki && (
+        <div style={{ 
+          padding: '0.75rem 1rem', 
+          backgroundColor: 'rgba(139, 92, 246, 0.08)', 
+          borderRadius: '12px', 
+          border: '1px solid rgba(139, 92, 246, 0.15)',
+          fontSize: '0.85rem'
+        }}>
+          <span style={{ fontWeight: 700, color: '#8b5cf6', display: 'block', marginBottom: '0.25rem' }}>IKI Rencana Kinerja:</span>
+          <span style={{ opacity: 0.85 }}>{selectedRencana.iki}</span>
+        </div>
+      )}
 
       <div style={{ 
         padding: '1.25rem', 
@@ -344,94 +466,143 @@ export default function ReportModal({ report, isCopy, rencanaOptions, timOptions
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-          <SearchableSelect 
-            label="Progres"
-            options={['0%', '25%', '50%', '75%', '100%'].map(p => ({ id: p, nama: p }))}
-            value={formData.progress}
-            onChange={(val) => setFormData({ ...formData, progress: val })}
+          <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
+            <Activity size={14} color="var(--primary)" />
+            Progres (%)
+          </label>
+          <input 
+            type="number"
+            min={0}
+            max={100}
             required
+            value={formData.progress}
+            onChange={(e) => setFormData({ ...formData, progress: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })}
+            className="input-base"
           />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
           <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
-             Bukti (Foto/Video/PDF)
+             Data Dukung & Link
           </label>
-          <div style={{ position: 'relative' }}>
-             {uploading ? (
-                <div className="btn glass" style={{ width: '100%', gap: '0.5rem', opacity: 0.6 }}>
-                  <Loader2 size={16} className="spin" /> Mengunggah...
-                </div>
-             ) : formData.buktiUrl ? (
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '0.75rem', 
-                  padding: '0.75rem 1rem', 
-                  backgroundColor: 'rgba(16, 185, 129, 0.05)',
-                  border: '1px solid var(--success)',
-                  borderRadius: '12px',
-                  color: 'var(--success)',
-                  fontSize: '0.85rem',
-                  fontWeight: 600
-                }}>
-                  {getFileIcon(formData.buktiUrl)}
-                  <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {uploadedFileName || 'File Terlampir'}
-                  </span>
-                  <Check size={16} />
-                  <button type="button" onClick={() => { setFormData({ ...formData, buktiUrl: '' }); setUploadedFileName(null); }} style={{ color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }}>
-                    <X size={16} />
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <input 
+              type="url"
+              placeholder="Tambah link..."
+              value={newBuktiLink}
+              onChange={(e) => setNewBuktiLink(e.target.value)}
+              className="input-base"
+              style={{ flex: 1 }}
+            />
+            <button type="button" onClick={handleAddBuktiLink} className="btn glass" style={{ padding: '0.5rem' }}>
+              <Plus size={16} />
+            </button>
+          </div>
+          {buktiLinkList.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.4rem' }}>
+              {buktiLinkList.map((url, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.5rem', backgroundColor: 'rgba(16,185,129,0.05)', borderRadius: '8px', fontSize: '0.8rem' }}>
+                  {getFileIcon(url)}
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{url}</span>
+                  <button type="button" onClick={() => handleRemoveBuktiLink(i)} style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer' }}>
+                    <X size={14} />
                   </button>
                 </div>
-             ) : (
-                <div style={{ position: 'relative' }}>
-                  <button type="button" className="btn glass" style={{ width: '100%', gap: '0.5rem' }}>
-                    <UploadCloud size={16} /> Pilih File Bukti
-                  </button>
-                  <input 
-                    type="file" 
-                    accept="*/*" 
-                    onChange={handleFileUpload} 
-                    style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} 
-                  />
-                </div>
-             )}
+              ))}
+            </div>
+          )}
+          <div style={{ position: 'relative', marginTop: '0.4rem' }}>
+            <button type="button" className="btn glass" style={{ width: '100%', gap: '0.5rem', fontSize: '0.8rem' }}>
+              <UploadCloud size={14} /> Upload File Bukti
+            </button>
+            <input 
+              type="file" 
+              accept="*/*" 
+              onChange={handleFileUpload} 
+              disabled={uploading}
+              style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} 
+            />
           </div>
           <button 
             type="button"
             onClick={handleAnalyzeImage}
-            disabled={isAnalyzing || uploading || (!selectedFile && !formData.buktiUrl)}
+            disabled={isAnalyzing || uploading || (!selectedFile && buktiLinkList.length === 0)}
             className="btn glass"
             style={{ 
               width: '100%', 
-              marginTop: '0.75rem', 
+              marginTop: '0.4rem', 
               gap: '0.6rem', 
               border: '1px solid #8b5cf6', 
               color: '#8b5cf6', 
               fontWeight: 800,
               fontSize: '0.8rem',
-              opacity: (!selectedFile && !formData.buktiUrl) ? 0.5 : 1,
-              cursor: (!selectedFile && !formData.buktiUrl) ? 'not-allowed' : 'pointer'
+              opacity: (!selectedFile && buktiLinkList.length === 0) ? 0.5 : 1,
+              cursor: (!selectedFile && buktiLinkList.length === 0) ? 'not-allowed' : 'pointer'
             }}
           >
-            {isAnalyzing ? (
-              <Loader2 size={14} className="spin" />
-            ) : (
-              (selectedFile?.type?.includes('image') || (formData.buktiUrl && ['jpg','jpeg','png','webp'].some(ext => formData.buktiUrl.toLowerCase().endsWith(ext)))) ? <ImageIcon size={14} /> : <FileText size={14} />
-            )}
-            {isAnalyzing ? 'Menganalisis...' : (
-              (selectedFile?.type?.includes('image') || (formData.buktiUrl && ['jpg','jpeg','png','webp'].some(ext => formData.buktiUrl.toLowerCase().endsWith(ext)))) ? 'Analisis Foto AI ✨' : 'Analisis Dokumen AI ✨'
-            )}
+            {isAnalyzing ? <Loader2 size={14} className="spin" /> : <FileText size={14} />}
+            {isAnalyzing ? 'Menganalisis...' : 'Analisis AI ✨'}
           </button>
         </div>
       </div>
 
-      <div style={{ marginTop: '0.5rem', display: 'flex', gap: '1rem' }}>
-        <button type="button" onClick={onClose} className="btn glass" style={{ flex: 1 }}>Batal</button>
-        <button type="submit" disabled={loading || uploading} className="btn btn-primary" style={{ flex: 2 }}>
-          {loading ? <Loader2 size={20} className="spin" /> : ((report && !isCopy) ? 'Update Laporan' : 'Simpan Laporan')}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+        <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: 0.8 }}>
+          <CheckCircle size={14} color="var(--primary)" />
+          Masukan ke Capaian SKP
+        </label>
+        <textarea 
+          rows={2}
+          placeholder="Catatan untuk capaian SKP..."
+          value={formData.masukanSkp}
+          onChange={(e) => setFormData({ ...formData, masukanSkp: e.target.value })}
+          className="input-base"
+        />
+      </div>
+
+      {reviewResult && (
+        <div style={{ 
+          marginTop: '1.5rem', 
+          padding: '1.5rem', 
+          borderRadius: '16px', 
+          backgroundColor: reviewResult.isAppropriate ? 'rgba(16, 185, 129, 0.05)' : 'rgba(239, 68, 68, 0.05)',
+          border: `1px solid ${reviewResult.isAppropriate ? 'var(--success)' : 'var(--error)'}`,
+          animation: 'slideUp 0.3s ease'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+             {reviewResult.isAppropriate ? <CheckCircle size={20} color="var(--success)" /> : <AlertTriangle size={20} color="var(--error)" />}
+             <h4 style={{ fontWeight: 800, fontSize: '0.95rem', color: reviewResult.isAppropriate ? 'var(--success)' : 'var(--error)' }}>
+               {reviewResult.isAppropriate ? 'Laporan Sudah Sesuai' : 'Perlu Perbaikan'}
+             </h4>
+          </div>
+          <p style={{ fontSize: '0.9rem', lineHeight: '1.6', marginBottom: '1rem', opacity: 0.9 }}>{reviewResult.feedback}</p>
+          {reviewResult.suggestions && (
+            <div style={{ padding: '1rem', backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: '12px', fontSize: '0.85rem' }}>
+              <span style={{ fontWeight: 800, color: 'var(--primary)', display: 'block', marginBottom: '0.25rem' }}>Saran AI:</span>
+              {reviewResult.suggestions}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <button 
+          type="button" 
+          onClick={handleReviewAI} 
+          disabled={reviewing || uploading} 
+          className="btn glass" 
+          style={{ width: '100%', gap: '0.75rem', border: '1px solid var(--primary)', color: 'var(--primary)', fontWeight: 800 }}
+        >
+          {reviewing ? <Loader2 size={18} className="spin" /> : <BrainCircuit size={18} />}
+          {reviewing ? 'MENGANALISIS KUALITAS...' : 'REVIEW KUALITAS AI ✨'}
         </button>
+
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <button type="button" onClick={onClose} className="btn glass" style={{ flex: 1 }}>Batal</button>
+          <button type="submit" disabled={saving || uploading} className="btn btn-primary" style={{ flex: 2 }}>
+            {saving ? <Loader2 size={20} className="spin" /> : ((report && !isCopy) ? 'Update Laporan' : 'Simpan Laporan')}
+          </button>
+        </div>
       </div>
     </form>
   );

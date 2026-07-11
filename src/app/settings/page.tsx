@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useToast } from '@/providers/ToastProvider';
-import { Save, Folder, Loader2, Info, Rocket, CheckCircle2 } from 'lucide-react';
+import { Save, Folder, Loader2, Info, Rocket, CheckCircle2, Smartphone, Link2, Link2Off } from 'lucide-react';
 import { saveSettings, getSettings, setupAutoDrive } from './actions';
 
 export default function SettingsPage() {
@@ -138,6 +138,91 @@ export default function SettingsPage() {
           </button>
         </form>
       </div>
+
+      <div className="card glass" style={{ padding: '2.5rem', marginTop: '2rem' }}>
+        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Smartphone size={20} color="var(--primary)" />
+          Integrasi Telegram
+        </h2>
+        <TelegramSection />
+      </div>
+    </div>
+  );
+}
+
+function TelegramSection() {
+  const { showToast } = useToast();
+  const [data, setData] = useState<{ link: string; isLinked: boolean; chatId: string | null; botUsername: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  async function fetchLink() {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/telegram/link');
+      if (res.ok) setData(await res.json());
+    } catch {} finally { setLoading(false); }
+  }
+
+  async function handleUnlink() {
+    if (!confirm('Putuskan koneksi Telegram?')) return;
+    try {
+      await fetch('/api/telegram/link', { method: 'DELETE' });
+      setData(prev => prev ? { ...prev, isLinked: false, chatId: null } : null);
+      showToast('Koneksi Telegram diputuskan.', 'success');
+    } catch { showToast('Gagal memutuskan koneksi.', 'error'); }
+  }
+
+  useEffect(() => { fetchLink(); }, []);
+
+  if (loading) return <div style={{ textAlign: 'center', padding: '1rem' }}><Loader2 className="spin" /></div>;
+
+  return (
+    <div>
+      {data?.isLinked ? (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', padding: '1rem', backgroundColor: 'rgba(16,185,129,0.05)', borderRadius: '12px', border: '1px solid var(--success)' }}>
+            <CheckCircle2 size={24} color="var(--success)" />
+            <div>
+              <p style={{ fontWeight: 700, color: 'var(--success)' }}>Terhubung</p>
+              <p style={{ fontSize: '0.8rem', opacity: 0.6 }}>Telegram Chat ID: {data.chatId}</p>
+            </div>
+          </div>
+          <button onClick={handleUnlink} className="btn glass" style={{ color: 'var(--error)' }}>
+            <Link2Off size={16} /> Putuskan Koneksi
+          </button>
+        </div>
+      ) : (
+        <div>
+          <p style={{ fontSize: '0.9rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>
+            Hubungkan akun Telegram untuk membuat laporan langsung dari chat — kirim foto, dokumen, atau teks kegiatan.
+          </p>
+          <div style={{ 
+            padding: '1.25rem', 
+            backgroundColor: 'rgba(59, 130, 246, 0.05)', 
+            borderRadius: '12px', 
+            border: '1px solid rgba(59, 130, 246, 0.15)',
+            marginBottom: '1rem'
+          }}>
+            <p style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>Langkah-langkah:</p>
+            <ol style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.4rem', paddingLeft: '1.25rem' }}>
+              <li>Klik tombol di bawah untuk generate link</li>
+              <li>Klik link yang muncul untuk membuka Telegram</li>
+              <li>Klik "Start" atau kirim /start di chat bot</li>
+            </ol>
+          </div>
+          <button onClick={fetchLink} disabled={loading} className="btn btn-primary">
+            <Link2 size={16} /> Generate Link Telegram
+          </button>
+          {data?.link && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: '10px', wordBreak: 'break-all' }}>
+              <p style={{ fontSize: '0.8rem', marginBottom: '0.5rem', opacity: 0.6 }}>Klik link ini di HP kamu:</p>
+              <a href={data.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', fontWeight: 700, fontSize: '0.95rem' }}>
+                {data.link}
+              </a>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

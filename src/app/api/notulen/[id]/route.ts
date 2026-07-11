@@ -2,29 +2,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { notulen } from '@/db/schema';
 import { auth } from '@/auth';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
+import { NotulenSchema } from '@/lib/validations';
+import { z } from 'zod';
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const { id } = await params;
-    const data = await db.query.notulen.findFirst({
-      where: eq(notulen.id, id),
-    });
+    const [data] = await db
+      .select()
+      .from(notulen)
+      .where(and(eq(notulen.id, id), eq(notulen.userId, session.user.id)))
+      .limit(1);
 
     if (!data) {
       return NextResponse.json({ error: 'Notulen not found' }, { status: 404 });
-    }
-
-    if (data.userId !== session.user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     return NextResponse.json(data);
@@ -39,28 +39,20 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const { id } = await params;
     
-    // Check ownership first
-    const existing = await db.query.notulen.findFirst({
-      where: eq(notulen.id, id),
-    });
+    const result = await db.delete(notulen)
+      .where(and(eq(notulen.id, id), eq(notulen.userId, session.user.id)))
+      .returning();
 
-    if (!existing) {
+    if (result.length === 0) {
       return NextResponse.json({ error: 'Notulen not found' }, { status: 404 });
     }
-
-    if (existing.userId !== session.user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    console.log(`[DELETE] Deleting notulen ${id}`);
-    await db.delete(notulen).where(eq(notulen.id, id));
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -74,54 +66,31 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const { id } = await params;
-    const json = await req.json();
+    const body = await req.json();
     
-    // Check ownership first
-    const existing = await db.query.notulen.findFirst({
-      where: eq(notulen.id, id),
-    });
+    // Validate input (allow partial updates)
+    const validatedData = NotulenSchema.partial().parse(body);
 
-    if (!existing) {
-      return NextResponse.json({ error: 'Notulen not found' }, { status: 404 });
+    const result = await db.update(notulen)
+      .set(validatedData)
+      .where(and(eq(notulen.id, id), eq(notulen.userId, session.user.id)))
+      .returning();
+
+    if (result.length === 0) {
+      return NextResponse.json({ error: 'Notulen not found or unauthorized' }, { status: 404 });
     }
 
-    if (existing.userId !== session.user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
-    // Filter allowed fields to update
-    const { 
-      judul, tanggal, waktu, tempat, pemimpin, topik, 
-      notulis, peserta, konten, undanganUrl, 
-      daftarHadirUrl, dokumentasiUrls 
-    } = json;
-
-    const updateData: any = {};
-    if (judul !== undefined) updateData.judul = judul;
-    if (tanggal !== undefined) updateData.tanggal = tanggal;
-    if (waktu !== undefined) updateData.waktu = waktu;
-    if (tempat !== undefined) updateData.tempat = tempat;
-    if (pemimpin !== undefined) updateData.pemimpin = pemimpin;
-    if (topik !== undefined) updateData.topik = topik;
-    if (notulis !== undefined) updateData.notulis = notulis;
-    if (peserta !== undefined) updateData.peserta = peserta;
-    if (konten !== undefined) updateData.konten = konten;
-    if (undanganUrl !== undefined) updateData.undanganUrl = undanganUrl;
-    if (daftarHadirUrl !== undefined) updateData.daftarHadirUrl = daftarHadirUrl;
-    if (dokumentasiUrls !== undefined) updateData.dokumentasiUrls = dokumentasiUrls;
-
-    console.log(`[PATCH] Updating notulen ${id}:`, updateData);
-
-    await db.update(notulen).set(updateData).where(eq(notulen.id, id));
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, data: result[0] });
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: error.errors[0].message }, { status: 400 });
+    }
     console.error('[PATCH ERROR]:', error);
     return NextResponse.json({ error: 'Failed to update notulen' }, { status: 500 });
   }

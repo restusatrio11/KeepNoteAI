@@ -1,330 +1,193 @@
-export async function generateLaporanAI(deskripsi: string, rencanaContext?: string, timContext?: string) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = process.env.AI_MODEL || 'qwen/qwen3.6-plus:free';
+// src/lib/ai.ts
+import { AIResponseSchema, AIHealthSchema, AINotulenSchema, AIReviewSchema } from './validations';
+import { z } from 'zod';
 
-  if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY is not set');
-  }
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+const SITE_NAME = 'KeepNoteAI';
 
-  const contextStr = [
-    timContext ? `Tim Kerja: ${timContext}` : '',
-    rencanaContext ? `Program Kerja: ${rencanaContext}` : ''
-  ].filter(Boolean).join('\n');
+/**
+ * Core helper to call OpenRouter with Zod validation and Self-Correction Loop
+ */
+async function callOpenRouter<T>(
+  prompt: string | any[], 
+  schema: z.ZodSchema<T>, 
+  systemPrompt: string,
+  retries: number = 2,
+  overrideModel?: string
+): Promise<T> {
+  if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not defined');
 
-  const prompt = `Ubah deskripsi pekerjaan berikut menjadi laporan kerja profesional dalam Bahasa Indonesia.
-${contextStr ? `Konteks Pekerjaan:\n${contextStr}\n` : ''}
-Deskripsi Tugas Dasar dari user: "${deskripsi}"
+  let lastError = '';
 
-Gunakan konteks Tim dan Program di atas untuk menyesuaikan kosa kata dan standar profesionalitas hasil laporan.
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const fullSystemPrompt = lastError 
+        ? `${systemPrompt}\n\nIMPORTANT: Your previous response failed validation with error: ${lastError}. Please fix the JSON format and ensure it strictly follows the schema.`
+        : systemPrompt;
 
-Format Output (JSON):
-{
-  "kegiatan": "Hasil ringkasan kegiatan formal",
-  "capaian": "Target/hasil yang dicapai dari kegiatan tersebut"
-}`;
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'HTTP-Referer': SITE_URL,
+          'X-Title': SITE_NAME,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: overrideModel || process.env.AI_MODEL || 'openai/gpt-oss-120b:free',
+          messages: [
+            { role: 'system', content: fullSystemPrompt },
+            { role: 'user', content: prompt },
+          ],
+          response_format: { type: 'json_object' }
+        }),
+      });
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://antigravity-reporting.com',
-      'X-Title': 'KeepNoteAI'
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: 'system', content: 'Anda adalah asisten pelaporan kerja profesional.' },
-        { role: 'user', content: prompt }
-      ],
-      response_format: { type: 'json_object' }
-    })
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error('OpenRouter Error:', errorBody);
-    throw new Error('Failed to generate AI response');
-  }
-
-  const data = await response.json();
-  const content = data.choices[0].message.content;
-  
-  try {
-    return JSON.parse(content);
-  } catch (e) {
-    console.error('Failed to parse AI JSON:', content);
-    return { kegiatan: content, capaian: '-' };
-  }
-}
-
-export async function analyzeImageAI(base64Image: string, contentType: string, rencanaContext: string) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = 'qwen/qwen3.6-plus:free'; // Always use the free model for vision as requested
-
-  if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY is not set');
-  }
-
-  const prompt = `Analisis gambar berikut berdasarkan konteks Rencana Kerja: "${rencanaContext}".
-Berikan uraian kegiatan formal dan capaian profesional yang sesuai dengan apa yang terlihat di gambar tersebut dan hubungkan dengan rencana kerja yang dipilih.
-
-Format Output (JSON):
-{
-  "kegiatan": "Hasil ringkasan kegiatan formal berdasarkan visual",
-  "capaian": "Target/hasil nyata yang terlihat/tercapai"
-}`;
-
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://antigravity-reporting.com',
-      'X-Title': 'KeepNoteAI'
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { 
-              type: 'image_url', 
-              image_url: { 
-                url: `data:${contentType};base64,${base64Image}` 
-              } 
-            }
-          ]
-        }
-      ],
-      response_format: { type: 'json_object' }
-    })
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error('OpenRouter Error:', errorBody);
-    throw new Error('Failed to analyze image with AI');
-  }
-
-  const data = await response.json();
-  const content = data.choices[0].message.content;
-  
-  try {
-    return JSON.parse(content);
-  } catch (e) {
-    console.error('Failed to parse AI JSON:', content);
-    return { kegiatan: content, capaian: '-' };
-  }
-}
-
-export async function analyzeDocumentAI(documentText: string, rencanaContext: string) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = process.env.AI_MODEL || 'qwen/qwen3.6-plus:free';
-
-  if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY is not set');
-  }
-
-  const prompt = `Analisis isi dokumen berikut berdasarkan konteks Rencana Kerja: "${rencanaContext}".
-Isi Dokumen:
----
-${documentText.substring(0, 6000)} 
----
-Berikan uraian kegiatan formal dan capaian profesional yang sesuai dengan isi dokumen tersebut dan hubungkan dengan rencana kerja yang dipilih.
-
-Format Output (JSON):
-{
-  "kegiatan": "Hasil ringkasan kegiatan formal berdasarkan isi dokumen",
-  "capaian": "Target/hasil nyata yang tercapai dari dokumen tersebut"
-}`;
-
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://antigravity-reporting.com',
-      'X-Title': 'KeepNoteAI'
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: 'system', content: 'Anda adalah asisten pelaporan profesional yang ahli merangkum dokumen.' },
-        { role: 'user', content: prompt }
-      ],
-      response_format: { type: 'json_object' }
-    })
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error('OpenRouter Error:', errorBody);
-    throw new Error('Failed to analyze document with AI');
-  }
-
-  const data = await response.json();
-  const content = data.choices[0].message.content;
-  
-  try {
-    return JSON.parse(content);
-  } catch (e) {
-    console.error('Failed to parse AI JSON:', content);
-    return { kegiatan: content, capaian: '-' };
-  }
-}
-
-export async function analyzeReportHealthAI(reportSummary: string) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = process.env.AI_MODEL || 'qwen/qwen3.6-plus:free';
-
-  if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY is not set');
-  }
-
-  const prompt = `Analisis riwayat laporan berikut dan berikan evaluasi "Kesehatan Laporan".
-Riwayat Laporan:
----
-${reportSummary}
----
-Berikan skor (angka 0-100), status singkat (misal: "Sangat Baik"), dan pesan motivasi/evaluasi dalam Bahasa Indonesia (maksimal 2 kalimat).
-
-Format Output (JSON):
-{
-  "score": 85,
-  "status": "Baik",
-  "message": "Pesan motivasi Anda..."
-}`;
-
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://antigravity-reporting.com',
-      'X-Title': 'KeepNoteAI'
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: 'system', content: 'Anda adalah pakar manajemen performa kerja yang memberikan feedback konstruktif.' },
-        { role: 'user', content: prompt }
-      ],
-      response_format: { type: 'json_object' }
-    })
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error('OpenRouter Error:', errorBody);
-    throw new Error('Failed to analyze health with AI');
-  }
-
-  const data = await response.json();
-  const content = data.choices[0].message.content;
-  
-  try {
-    return JSON.parse(content);
-  } catch (e) {
-    console.error('Failed to parse AI JSON:', content);
-    return { 
-      score: 50, 
-      status: 'Cukup', 
-      message: 'Terus tingkatkan konsistensi pelaporan Anda setiap hari.' 
-    };
-  }
-}
-
-export async function generateNotulenAI(rawNotes: string, metadata: { judul?: string; topik?: string }) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = process.env.AI_MODEL || 'google/gemini-2.0-flash-exp:free';
-
-  if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY is not set');
-  }
-
-  const prompt = `Anda adalah seorang Senior Strategic Planner dan Ahli Manajemen Kinerja Profesional. Tugas Anda adalah mentransformasi catatan rapat mentah menjadi Dokumen Notulen Strategis yang berfokus pada Capaian Kinerja, Akuntabilitas, dan Rencana Aksi Nyata.
-
-Informasi Rapat:
-Subjek: ${metadata.judul || 'Rapat Koordinasi'}
-Agenda Utama: ${metadata.topik || 'Peningkatan Kinerja Operasional'}
-
-Data Input (Catatan Kasar):
----
-${rawNotes}
----
-
-Instruksi Khusus (Wajib Diikuti):
-1. PERSONA: Gunakan sudut pandang seorang Perencana Profesional yang tajam, sistematis, dan solutif.
-2. DIKSI: Gunakan Bahasa Indonesia formal tingkat tinggi (bahasa korporat/birokrasi profesional). Hindari kata-kata santai. Gunakan istilah seperti 'Mengakselerasi', 'Parameter', 'Target Capaian', 'Kendala Strategis', 'Sinergitas', dan 'Optimalisasi'.
-3. STRUKTUR PEMBAHASAN:
-   - Bedah setiap topik menjadi narasi yang menjelaskan 'Situasi Saat Ini' dan 'Target/Solusi'.
-   - Konversikan setiap keputusan menjadi "Capaian Kinerja" yang dapat diukur.
-4. RINGKASAN EKSEKUTIF: Buat ringkasan yang fokus pada hasil rapat bagi keberlangsungan organisasi.
-5. INSIGHTS: Berikan 3-5 poin rekomendasi strategis sebagai seorang perencana untuk langkah ke depan.
-
-Format Output (JSON):
-{
-  "pembahasan": [
-    {
-      "topik": "Judul Agenda Strategis",
-      "items": [
-        {
-          "deskripsi": "Narasi profesional mengenai poin yang dibahas (sangat rapi dan detail)",
-          "solusi": "Target Capaian / Rencana Aksi / Keputusan Strategis"
-        }
-      ]
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message || 'OpenRouter API Error');
+      
+      const content = data.choices[0].message.content;
+      const cleanedContent = content.replace(/```json|```/g, '').trim();
+      
+      try {
+        const parsed = JSON.parse(cleanedContent);
+        return schema.parse(parsed);
+      } catch (parseErr: any) {
+        lastError = parseErr.message;
+        if (i === retries) throw parseErr;
+        console.warn(`AI Validation failed (Attempt ${i+1}/${retries+1}): ${lastError}. Retrying...`);
+      }
+    } catch (error: any) {
+      if (i === retries) throw error;
+      lastError = error.message;
     }
-  ],
-  "kesimpulan": "Ringkasan Eksekutif Perencana mengenai hasil dan dampak rapat...",
-  "insights": [
-    "Rekomendasi Strategis 1 untuk Akselerasi Kinerja",
-    "Rekomendasi Strategis 2 untuk Mitigasi Risiko"
-  ]
-}`;
-
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://antigravity-reporting.com',
-      'X-Title': 'KeepNoteAI'
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: 'system', content: 'Anda adalah Senior Strategic Planner yang ahli dalam merancang capaian kinerja dan notulen profesional.' },
-        { role: 'user', content: prompt }
-      ]
-    })
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error('OpenRouter Error:', errorBody);
-    throw new Error('Failed to generate notulen with AI');
   }
+  throw new Error('Failed to get valid response from AI after multiple attempts');
+}
 
-  const data = await response.json();
+/**
+ * Generate professional report with Context (Memory)
+ */
+export async function generateReport(
+  deskripsi: string, 
+  timContext?: string, 
+  rencanaContext?: string,
+  history?: string
+) {
+  const systemPrompt = `You are a professional reporting assistant. 
+  Convert casual daily work descriptions into formal, professional Indonesian language.
+  Respond ONLY with a JSON object.
+  Format: { "kegiatan": "string", "capaian": "string" }`;
+
+  const userPrompt = `
+  Context:
+  Tim: ${timContext || 'General'}
+  Program: ${rencanaContext || 'General'}
   
-  if (!data.choices || data.choices.length === 0) {
-    console.error('AI Provider Response Error:', data);
-    const apiError = data.error?.message || 'AI Provider returned no results.';
-    throw new Error(`${apiError} (Model: ${model})`);
-  }
-
-  let content = data.choices[0].message.content;
+  ${history ? `Recent History Reference (Memory):\n${history}\n` : ''}
   
-  // Clean up content if AI wrapped it in markdown code block (e.g. ```json ... ```)
-  content = content.replace(/```json/g, '').replace(/```/g, '').trim();
+  User Input: "${deskripsi}"
+  
+  Please provide a professional version of this activity and its achievement.`;
 
-  try {
-    return JSON.parse(content);
-  } catch (e) {
-    console.error('Failed to parse AI JSON:', content);
-    throw new Error('AI output was not valid JSON. Please try again.');
-  }
+  return callOpenRouter(userPrompt, AIResponseSchema, systemPrompt);
+}
+
+/**
+ * Analyze work quality (Agentic Supervisor)
+ */
+export async function reviewReport(kegiatan: string, progress: string, capaian: string) {
+  const systemPrompt = `You are a strict work supervisor. 
+  Analyze if the work description matches the progress percentage and achievement quality.
+  Provide feedback in Indonesian.
+  Respond ONLY with a JSON object.
+  Format: { "isAppropriate": boolean, "feedback": "string", "suggestions": "string" }`;
+
+  const userPrompt = `
+  Activity: ${kegiatan}
+  Progress: ${progress}
+  Achievement: ${capaian}
+  
+  Is this report high quality and realistic?`;
+
+  return callOpenRouter(userPrompt, AIReviewSchema, systemPrompt);
+}
+
+/**
+ * Health check AI
+ */
+export async function analyzeHealth(reportSummary: string) {
+  const systemPrompt = `Analyze health markers and give professional performance advice based on report history.
+  Respond ONLY with a JSON object.
+  Format: { "status": "string", "message": "string", "score": number }`;
+  
+  return callOpenRouter(reportSummary, AIHealthSchema, systemPrompt);
+}
+
+/**
+ * Parse raw report from OCR/Chat
+ */
+export async function parseRawReport(text: string) {
+  const systemPrompt = `Extract work activities from unstructured text.
+  Respond ONLY with a JSON object.
+  Format: { "kegiatan": "string", "capaian": "string", "progress": "string" }`;
+
+  return callOpenRouter(text, AIResponseSchema, systemPrompt);
+}
+
+/**
+ * Analyze image or document for activity report (OCR + Description)
+ */
+export async function analyzeImageReport(base64Image: string, contentType: string, rencanaContext?: string) {
+  const systemPrompt = `Analyze the image or document and provide a professional activity description.
+  Respond ONLY with a JSON object.
+  Format: { "kegiatan": "string", "capaian": "string" }`;
+
+  const userPrompt = [
+    { type: 'text', text: `Context: ${rencanaContext || 'General'}. Analyze this and summarize professional activity.` },
+    { type: 'image_url', image_url: { url: `data:${contentType};base64,${base64Image}` } }
+  ];
+
+  return callOpenRouter(userPrompt, AIResponseSchema, systemPrompt);
+}
+
+/**
+ * Generate meeting notes from text
+ */
+export async function generateMeetingNotes(text: string, metadata?: any) {
+  const systemPrompt = `You are a professional meeting minute taker.
+  Format: { "judul": "string", "kesimpulan": "string", "pembahasan": [{ "topik": "string", "items": [{ "deskripsi": "string", "solusi": "string" }] }], "insights": ["string"] }`;
+
+  const userPrompt = `
+  Meeting Info: ${JSON.stringify(metadata || {})}
+  Notes/Transcript: ${text}
+  
+  Please provide a structured professional meeting summary.`;
+
+  return callOpenRouter(userPrompt, AINotulenSchema, systemPrompt);
+}
+
+/**
+ * Audio transcription and summarization (Multimodal)
+ */
+export async function processMeetingAudio(base64Audio: string, contentType: string, metadata?: any) {
+  const systemPrompt = `You are an AI that analyzes meeting audio recordings.
+  Transcribe and then summarize the meeting into structured professional notes.
+  Respond ONLY with a JSON object.
+  Format: { "judul": "string", "kesimpulan": "string", "pembahasan": [{ "topik": "string", "items": [{ "deskripsi": "string", "solusi": "string" }] }], "insights": ["string"] }`;
+
+  const userPrompt = [
+    { type: 'text', text: `Meeting Context: ${JSON.stringify(metadata || {})}. Analyze the audio and provide minutes.` },
+    { 
+      type: 'input_file', 
+      input_file: { 
+        data: base64Audio, 
+        mime_type: contentType 
+      } 
+    }
+  ];
+  
+  // Audio requires Gemini specifically on OpenRouter
+  return callOpenRouter(userPrompt as any, AINotulenSchema, systemPrompt, 2, 'google/gemini-2.0-flash-lite-preview-02-05:free');
 }

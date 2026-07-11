@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { analyzeImageAI, analyzeDocumentAI } from '@/lib/ai';
+import { analyzeImageReport } from '@/lib/ai';
 import { auth } from '@/auth';
 import { db } from '@/db';
 import { masterRencana } from '@/db/schema';
@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
     const { base64Image, contentType, rencanaId } = await req.json();
@@ -21,9 +21,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch rencana details for context
-    const rencana = await db.query.masterRencana.findFirst({
-      where: eq(masterRencana.id, rencanaId),
-    });
+    const [rencana] = await db
+      .select()
+      .from(masterRencana)
+      .where(eq(masterRencana.id, rencanaId))
+      .limit(1);
 
     if (!rencana) {
       return NextResponse.json({ error: 'Rencana not found' }, { status: 404 });
@@ -35,13 +37,14 @@ export async function POST(req: NextRequest) {
 
     if (contentType === 'application/pdf') {
       const text = await extractTextFromPDF(buffer);
-      result = await analyzeDocumentAI(text, context);
+      // For text documents, we can still use analyzeImageReport by passing the text in context
+      result = await analyzeImageReport('', 'text/plain', `${context}\n\nDocument Text Content: ${text.substring(0, 5000)}`);
     } else if (contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || contentType === 'application/msword') {
       const data = await mammoth.extractRawText({ buffer });
-      result = await analyzeDocumentAI(data.value, context);
+      result = await analyzeImageReport('', 'text/plain', `${context}\n\nDocument Text Content: ${data.value.substring(0, 5000)}`);
     } else {
       // Assume it's an image
-      result = await analyzeImageAI(base64Image, contentType, context);
+      result = await analyzeImageReport(base64Image, contentType, context);
     }
 
     return NextResponse.json(result);

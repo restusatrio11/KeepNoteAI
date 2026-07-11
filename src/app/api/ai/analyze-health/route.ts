@@ -3,7 +3,7 @@ import { auth } from '@/auth';
 import { db } from '@/db';
 import { laporan, masterRencana, userSettings } from '@/db/schema';
 import { eq, desc, count } from 'drizzle-orm';
-import { analyzeReportHealthAI } from '@/lib/ai';
+import { analyzeHealth } from '@/lib/ai';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
     // 4. If count changed or no cache, fetch reports for fresh analysis
     const userReports = await db
       .select({
-        tanggal: laporan.tanggal,
+        tanggal: laporan.tanggalMulai,
         kegiatan: laporan.kegiatan,
         progress: laporan.progress,
         rencana: masterRencana.nama,
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
       .from(laporan)
       .innerJoin(masterRencana, eq(laporan.rencanaId, masterRencana.id))
       .where(eq(laporan.userId, userId))
-      .orderBy(desc(laporan.tanggal))
+      .orderBy(desc(laporan.tanggalMulai))
       .limit(10);
 
     if (userReports.length === 0) {
@@ -69,11 +69,11 @@ export async function GET(req: NextRequest) {
     }
 
     const reportSummary = userReports
-      .map(r => `[${r.tanggal}] ${r.rencana}: ${r.kegiatan} (Progres: ${r.progress})`)
+      .map(r => `[${r.tanggal}] ${r.rencana}: ${r.kegiatan} (Progres: ${r.progress}%)`)
       .join('\n');
 
     // 5. Call AI
-    const analysis = await analyzeReportHealthAI(reportSummary);
+    const analysis = await analyzeHealth(reportSummary);
 
     // 6. Update cache in user_settings (Upsert)
     if (settings) {

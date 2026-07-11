@@ -22,42 +22,44 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const todayStr = new Date().toISOString().split('T')[0];
 
   const filters = [eq(laporan.userId, userId)];
-  if (from) filters.push(gte(laporan.tanggal, from));
-  if (to) filters.push(lte(laporan.tanggal, to));
+  if (from) filters.push(gte(laporan.tanggalMulai, from));
+  if (to) filters.push(lte(laporan.tanggalMulai, to));
   const whereClause = and(...filters);
 
   let totalLaporanCount = 0;
   let totalRencanaCount = 0;
+  let tercapaiCount = 0;
   let activities: any[] = [];
 
   try {
     const [totalLaporan] = await db.select({ value: count() }).from(laporan).where(whereClause);
     const [totalRencana] = await db.select({ value: count() }).from(masterRencana);
+    const [totalTercapai] = await db.select({ value: count() }).from(laporan).where(and(whereClause, eq(laporan.progress, 100)));
     
     totalLaporanCount = totalLaporan?.value || 0;
     totalRencanaCount = totalRencana?.value || 0;
+    tercapaiCount = totalTercapai?.value || 0;
 
     activities = await db
       .select({
         id: laporan.id,
-        tanggal: laporan.tanggal,
+        tanggal: laporan.tanggalMulai,
         rencana: masterRencana.nama,
         progress: laporan.progress,
       })
       .from(laporan)
       .innerJoin(masterRencana, eq(laporan.rencanaId, masterRencana.id))
       .where(whereClause)
-      .orderBy(desc(laporan.tanggal))
+      .orderBy(desc(laporan.tanggalMulai))
       .limit(5);
   } catch (error) {
     console.error('Dashboard Data Fetch Error:', error);
-    // Silent fail - stats will show 0 and activities will be empty
   }
 
   const stats = [
     { label: 'Total Laporan', value: totalLaporanCount, icon: FileText, color: '#3b82f6' },
     { label: 'Rencana Aktif', value: totalRencanaCount, icon: Clock, color: '#f59e0b' },
-    { label: 'Tercapai', value: totalLaporanCount, icon: CheckCircle, color: '#10b981' },
+    { label: 'Tercapai (100%)', value: tercapaiCount, icon: CheckCircle, color: '#10b981' },
   ];
 
   const recentActivities = activities;
@@ -137,7 +139,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                     </p>
                   </div>
                   <div style={{ padding: '0.4rem 1rem', borderRadius: '20px', backgroundColor: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)', fontSize: '0.85rem', fontWeight: 700 }}>
-                    {activity.progress}
+                    {activity.progress}%
                   </div>
                 </div>
               ))

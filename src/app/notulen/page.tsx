@@ -27,6 +27,7 @@ export default function NotulenListPage() {
   const { showToast } = useToast();
   const [notulenList, setNotulenList] = useState<Notulen[]>([]);
   const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isLengkapiModalOpen, setIsLengkapiModalOpen] = useState(false);
   const [mergingId, setMergingId] = useState<string | null>(null);
@@ -36,23 +37,37 @@ export default function NotulenListPage() {
   const [search, setSearch] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [page, setPage] = useState(1);
+  const [limit] = useState(10);
 
   const fetchNotulen = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/notulen');
+      const query = new URLSearchParams({
+        search,
+        from: fromDate,
+        to: toDate,
+        page: page.toString(),
+        limit: limit.toString()
+      });
+      const res = await fetch(`/api/notulen?${query}`);
       const data = await res.json();
-      setNotulenList(Array.isArray(data) ? data : []);
+      if (data.data) {
+        setNotulenList(data.data);
+        setTotal(data.total);
+      }
     } catch (err) {
       showToast('Gagal memuat arsip notulen', 'error');
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, [search, fromDate, toDate, page, limit, showToast]);
 
   useEffect(() => {
     fetchNotulen();
   }, [fetchNotulen]);
+
+  const totalPages = Math.ceil(total / limit);
 
   const handleDelete = async () => {
     if (!selectedNotulen) return;
@@ -114,7 +129,6 @@ export default function NotulenListPage() {
       const data = await res.json();
       
       if (data.success) {
-        // Optimistically update or just show success
         await handleUpdateNotulen(selectedNotulen.id, { [type === 'undangan' ? 'undanganUrl' : 'daftarHadirUrl']: data.link });
         showToast('File berhasil terunggah!', 'success');
       }
@@ -137,19 +151,6 @@ export default function NotulenListPage() {
       console.error(err);
     }
   };
-
-  const filteredList = notulenList.filter(n => {
-    const matchesSearch = n.judul.toLowerCase().includes(search.toLowerCase()) || 
-                         (n.topik && n.topik.toLowerCase().includes(search.toLowerCase()));
-    
-    const date = new Date(n.tanggal);
-    const from = fromDate ? new Date(fromDate) : null;
-    const to = toDate ? new Date(toDate) : null;
-    
-    const matchesDate = (!from || date >= from) && (!to || date <= to);
-    
-    return matchesSearch && matchesDate;
-  });
 
   return (
     <div className="animate-in" style={{ padding: '1rem' }}>
@@ -218,12 +219,12 @@ export default function NotulenListPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredList.length === 0 && !loading ? (
+              {notulenList.length === 0 && !loading ? (
                 <tr>
                   <td colSpan={5} style={{ padding: '4rem', textAlign: 'center', color: 'var(--text-muted)' }}>Belum ada arsip notulen rapat.</td>
                 </tr>
               ) : (
-                filteredList.map((item) => (
+                notulenList.map((item) => (
                   <tr key={item.id} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.2s' }}>
                     <td style={{ padding: '1.25rem 1.5rem', fontSize: '0.9rem' }}>
                       {new Date(item.tanggal).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -287,6 +288,12 @@ export default function NotulenListPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div style={{ padding: '1.5rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1.5rem', borderTop: '1px solid var(--border)' }}>
+          <button disabled={page === 1} onClick={() => setPage(page - 1)} className="btn glass" style={{ padding: '0.6rem', borderRadius: '10px' }}><ChevronLeft size={20} /></button>
+          <span style={{ fontSize: '0.9rem', fontWeight: 800 }}>Halaman {page} dari {totalPages || 1}</span>
+          <button disabled={page === totalPages} onClick={() => setPage(page + 1)} className="btn glass" style={{ padding: '0.6rem', borderRadius: '10px' }}><ChevronRight size={20} /></button>
         </div>
       </div>
 

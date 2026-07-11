@@ -26,6 +26,7 @@ export async function PUT(
         nama: data.nama,
         kode: data.kode.toUpperCase(),
         timId: data.timId || null,
+        iki: data.iki || null,
       })
       .where(and(eq(masterRencana.id, id), eq(masterRencana.userId, userId as string)))
       .returning();

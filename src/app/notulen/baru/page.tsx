@@ -416,15 +416,72 @@ export default function BaruNotulenPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                 <label style={{ fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--primary)' }}>
                   <Sparkles size={20} className={loading ? 'animate-pulse' : ''} />
-                  Catatan Kasar Rapat (Ketik Disini)
+                  Input Rapat (Suara atau Teks)
                 </label>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Tiap baris adalah poin baru</span>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                   {/* Audio Upload */}
+                   <div style={{ position: 'relative' }}>
+                      <input 
+                        type="file" 
+                        accept="audio/*" 
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          
+                          setLoading(true);
+                          try {
+                            const reader = new FileReader();
+                            reader.readAsDataURL(file);
+                            reader.onload = async () => {
+                              const base64 = (reader.result as string).split(',')[1];
+                              try {
+                                const res = await fetch('/api/notulen/generate', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    audio: base64,
+                                    contentType: file.type,
+                                    metadata: { judul: formData.judul, topik: formData.topik }
+                                  })
+                                });
+                                const data = await res.json();
+                                if (data.result) {
+                                  setAiResult(data.result);
+                                  setPreviewMode(true);
+                                  showToast('AI telah berhasil mentranskrip dan menyusun notulen!', 'success');
+                                } else {
+                                  showToast(data.error || 'Gagal memproses audio', 'error');
+                                }
+                              } catch (err) {
+                                showToast('Gagal terhubung ke server AI', 'error');
+                              } finally {
+                                setLoading(false);
+                              }
+                            };
+                            reader.onerror = () => {
+                              showToast('Gagal membaca file audio', 'error');
+                              setLoading(false);
+                            };
+                          } catch (err) {
+                            showToast('Gagal memproses audio', 'error');
+                            setLoading(false);
+                          }
+                        }}
+                        style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', zIndex: 2 }}
+                        disabled={loading}
+                      />
+                      <button className="btn glass" style={{ gap: '0.5rem', fontSize: '0.8rem', color: 'var(--primary)', border: '1px solid var(--primary)' }}>
+                        <Activity size={14} /> Upload Audio Rapat 🎙️
+                      </button>
+                   </div>
+                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Tiap baris adalah poin baru</span>
+                </div>
               </div>
               
               <textarea 
                 name="rawNotes"
                 rows={10}
-                placeholder="Tuliskan poin-poin rapat di sini secara kasar. AI Magic akan merapikannya menjadi notulen profesional dengan struktur yang jelas."
+                placeholder="Tuliskan poin-poin rapat di sini secara kasar, atau upload file rekaman suara di atas. AI Magic akan merapikannya menjadi notulen profesional."
                 value={formData.rawNotes}
                 onChange={handleInputChange}
                 className="input-base"

@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
       timId: data.timId || null,
       nama: data.nama,
       kode: kode.toUpperCase(),
+      iki: data.iki || null,
     }).returning();
 
     return NextResponse.json(result[0]);

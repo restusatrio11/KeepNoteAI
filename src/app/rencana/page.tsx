@@ -24,7 +24,8 @@ export default function RencanaPage() {
   const [formData, setFormData] = useState({
     nama: '',
     kode: '',
-    timId: ''
+    timId: '',
+    iki: ''
   });
 
   const [timFormData, setTimFormData] = useState({
@@ -80,7 +81,7 @@ export default function RencanaPage() {
 
       if (res.ok) {
         showToast(editingItem ? 'Berhasil diperbarui!' : 'Berhasil disimpan!', 'success');
-        setFormData({ nama: '', kode: '', timId: '' });
+    setFormData({ nama: '', kode: '', timId: '', iki: '' });
         setTimFormData({ nama: '', keterangan: '' });
         setEditingItem(null);
         fetchRencana();
@@ -170,14 +171,14 @@ export default function RencanaPage() {
     if (activeTab === 'tim') {
       setTimFormData({ nama: item.nama, keterangan: item.keterangan || '' });
     } else {
-      setFormData({ nama: item.nama, kode: item.kode, timId: item.timId || '' });
+      setFormData({ nama: item.nama, kode: item.kode, timId: item.timId || '', iki: item.iki || '' });
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const cancelEdit = () => {
     setEditingItem(null);
-    setFormData({ nama: '', kode: '', timId: '' });
+        setFormData({ nama: '', kode: '', timId: '', iki: '' });
     setTimFormData({ nama: '', keterangan: '' });
   };
 
@@ -334,6 +335,17 @@ export default function RencanaPage() {
                   onChange={(e) => setFormData({ ...formData, nama: e.target.value })}
                 />
               </div>
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label htmlFor="iki" style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', fontWeight: 600 }}>IKI (Indikator Kinerja Individu)</label>
+                <textarea 
+                  name="iki" 
+                  placeholder="Contoh: Persentase penyelesaian tepat waktu, jumlah laporan yang akurat..."
+                  className="input-base"
+                  rows={2}
+                  value={formData.iki}
+                  onChange={(e) => setFormData({ ...formData, iki: e.target.value })}
+                />
+              </div>
               <div style={{ display: 'flex', gap: '0.75rem' }}>
                 {editingItem && (
                   <button type="button" onClick={cancelEdit} className="btn glass" style={{ flex: 1 }}>Batal</button>
@@ -364,16 +376,19 @@ export default function RencanaPage() {
                         <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: 'rgba(59, 130, 246, 0.1)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.8rem' }}>
                           {item.kode}
                         </div>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <h4 style={{ fontSize: '1rem', fontWeight: 600 }}>{item.nama}</h4>
-                            {team && (
-                              <span style={{ fontSize: '0.65rem', padding: '0.2rem 0.5rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', color: 'var(--primary)', borderRadius: '20px', fontWeight: 700 }}>
-                                {team.nama}
-                              </span>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <h4 style={{ fontSize: '1rem', fontWeight: 600 }}>{item.nama}</h4>
+                              {team && (
+                                <span style={{ fontSize: '0.65rem', padding: '0.2rem 0.5rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', color: 'var(--primary)', borderRadius: '20px', fontWeight: 700 }}>
+                                  {team.nama}
+                                </span>
+                              )}
+                            </div>
+                            {item.iki && (
+                              <p style={{ fontSize: '0.75rem', color: '#8b5cf6', marginTop: '0.2rem' }}>IKI: {item.iki}</p>
                             )}
-                          </div>
-                          {isMounted && (
+                            {isMounted && (
                             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                               Dibuat {new Date(item.createdAt).toLocaleDateString('id-ID')}
                             </p>

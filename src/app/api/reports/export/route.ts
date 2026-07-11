@@ -2,30 +2,36 @@ import { NextRequest, NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
 import { db } from '@/db';
 import { laporan, masterRencana } from '@/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and, gte, lte } from 'drizzle-orm';
 import { auth } from '@/auth';
 
 export async function GET(req: NextRequest) {
   const session = await auth();
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const userId = session.user?.id;
-    if (!userId) return NextResponse.json({ error: 'User ID missing' }, { status: 400 });
+    const userId = session.user.id;
+    const { searchParams } = new URL(req.url);
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+
+    const filters = [eq(laporan.userId, userId)];
+    if (from) filters.push(gte(laporan.tanggalMulai, from));
+    if (to) filters.push(lte(laporan.tanggalMulai, to));
 
     const data = await db
       .select({
-        tanggal: laporan.tanggal,
+        tanggal: laporan.tanggalMulai,
         rencana: masterRencana.nama,
         kegiatan: laporan.kegiatan,
         progress: laporan.progress,
         capaian: laporan.capaian,
-        bukti: laporan.buktiUrl,
+        bukti: laporan.buktiUrls,
       })
       .from(laporan)
       .innerJoin(masterRencana, eq(laporan.rencanaId, masterRencana.id))
-      .where(eq(laporan.userId, userId as string))
-      .orderBy(desc(laporan.tanggal));
+      .where(and(...filters))
+      .orderBy(desc(laporan.tanggalMulai));
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Laporan Pekerjaan');

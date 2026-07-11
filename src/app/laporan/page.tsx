@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon, Copy } from 'lucide-react';
+import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon, Copy, Clock } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReportModal from './ReportModal';
 import { useToast } from '@/providers/ToastProvider';
@@ -20,6 +20,7 @@ export default function LaporanPage() {
   const [filterRencana, setFilterRencana] = useState('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [triwulan, setTriwulan] = useState('');
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
 
@@ -98,6 +99,27 @@ export default function LaporanPage() {
     }
   };
 
+  const triwulanOptions = [
+    { id: '', nama: 'Semua Triwulan' },
+    { id: 'TW1', nama: 'TW I (Jan-Mar)' },
+    { id: 'TW2', nama: 'TW II (Apr-Jun)' },
+    { id: 'TW3', nama: 'TW III (Jul-Sep)' },
+    { id: 'TW4', nama: 'TW IV (Oct-Dec)' },
+  ];
+
+  const handleTriwulanChange = (val: string) => {
+    setTriwulan(val);
+    setPage(1);
+    const year = new Date().getFullYear();
+    switch (val) {
+      case 'TW1': setFromDate(`${year}-01-01`); setToDate(`${year}-03-31`); break;
+      case 'TW2': setFromDate(`${year}-04-01`); setToDate(`${year}-06-30`); break;
+      case 'TW3': setFromDate(`${year}-07-01`); setToDate(`${year}-09-30`); break;
+      case 'TW4': setFromDate(`${year}-10-01`); setToDate(`${year}-12-31`); break;
+      default: setFromDate(''); setToDate('');
+    }
+  };
+
   const getFileIcon = (url: string | null) => {
     if (!url) return null;
     const ext = url.split('.').pop()?.toLowerCase();
@@ -151,6 +173,19 @@ export default function LaporanPage() {
           />
         </div>
 
+        <div style={{ flex: '1 1 160px' }}>
+          <select 
+            value={triwulan}
+            onChange={(e) => handleTriwulanChange(e.target.value)}
+            className="input-base"
+            style={{ width: '100%', fontSize: '0.8rem' }}
+          >
+            {triwulanOptions.map(o => (
+              <option key={o.id} value={o.id}>{o.nama}</option>
+            ))}
+          </select>
+        </div>
+
         <div style={{ flex: '1 1 200px' }}>
           <SearchableSelect 
             options={filterOptions}
@@ -187,7 +222,17 @@ export default function LaporanPage() {
               ) : (
                 reports.map((report) => (
                   <tr key={report.id} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.2s' }}>
-                    <td style={{ padding: '1.25rem 1.5rem', fontSize: '0.9rem' }}>{new Date(report.tanggal).toLocaleDateString('id-ID')}</td>
+                    <td style={{ padding: '1.25rem 1.5rem', fontSize: '0.9rem' }}>
+                      {new Date(report.tanggalMulai).toLocaleDateString('id-ID')}
+                      {report.tanggalSelesai !== report.tanggalMulai && (
+                        <> - {new Date(report.tanggalSelesai).toLocaleDateString('id-ID')}</>
+                      )}
+                      {(report.jamMulai || report.jamSelesai) && (
+                        <div style={{ fontSize: '0.75rem', opacity: 0.5, marginTop: '0.2rem' }}>
+                          {report.jamMulai || '...'} - {report.jamSelesai || '...'}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: '1.25rem 1.5rem' }}>
                       <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '0.35rem 0.6rem', borderRadius: '8px', backgroundColor: 'rgba(59, 130, 246, 0.1)', color: 'var(--primary)' }}>
                         {report.rencanaKode}
@@ -195,26 +240,48 @@ export default function LaporanPage() {
                     </td>
                     <td style={{ padding: '1.25rem 1.5rem' }}>
                       <p style={{ fontWeight: 600, fontSize: '0.95rem', marginBottom: '0.25rem' }}>{report.kegiatan}</p>
-                      <p style={{ fontSize: '0.8rem', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        {getFileIcon(report.buktiUrl)}
+                      <p style={{ fontSize: '0.8rem', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        {(() => {
+                          try {
+                            const urls = JSON.parse(report.buktiUrls || '[]');
+                            return Array.isArray(urls) && urls.length > 0 ? urls.map((u: string, i: number) => (
+                              <span key={i}>{getFileIcon(u)}</span>
+                            )) : getFileIcon(report.buktiUrls);
+                          } catch { return getFileIcon(report.buktiUrls); }
+                        })()}
                         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' }}>{report.capaian}</span>
                       </p>
+                      {report.rencanaIki && (
+                        <p style={{ fontSize: '0.7rem', marginTop: '0.3rem', color: '#8b5cf6', opacity: 0.7 }}>
+                          IKI: {report.rencanaIki}
+                        </p>
+                      )}
+                      {report.masukanSkp && (
+                        <p style={{ fontSize: '0.7rem', marginTop: '0.1rem', opacity: 0.4 }}>
+                          SKP: {report.masukanSkp}
+                        </p>
+                      )}
                     </td>
                     <td style={{ padding: '1.25rem 1.5rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                         <div style={{ flex: 1, height: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '10px', overflow: 'hidden', minWidth: '60px' }}>
-                          <div style={{ width: report.progress, height: '100%', backgroundColor: 'var(--primary)', borderRadius: '10px' }} />
+                          <div style={{ width: `${report.progress}%`, height: '100%', backgroundColor: 'var(--primary)', borderRadius: '10px' }} />
                         </div>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--primary)' }}>{report.progress}</span>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--primary)' }}>{report.progress}%</span>
                       </div>
                     </td>
                     <td style={{ padding: '1.25rem 1.5rem', textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end' }}>
-                        {report.buktiUrl && (
-                          <a href={report.buktiUrl} target="_blank" rel="noopener noreferrer" className="btn glass" style={{ padding: '0.5rem', borderRadius: '10px' }}>
+                        {(() => {
+                          try {
+                            const urls = JSON.parse(report.buktiUrls || '[]');
+                            return Array.isArray(urls) ? urls.slice(0, 1) : [];
+                          } catch { return report.buktiUrls ? [report.buktiUrls] : []; }
+                        })().map((url: string, i: number) => (
+                          <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="btn glass" style={{ padding: '0.5rem', borderRadius: '10px' }}>
                             <ExternalLink size={16} />
                           </a>
-                        )}
+                        ))}
                         <button onClick={() => { setSelectedReport(report); setIsCopyModalOpen(true); }} className="btn glass" title="Salin Laporan" style={{ padding: '0.5rem', borderRadius: '10px', color: 'var(--primary)' }}>
                           <Copy size={16} />
                         </button>

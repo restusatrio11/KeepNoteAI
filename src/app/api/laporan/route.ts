@@ -3,13 +3,14 @@ import { db } from '@/db';
 import { laporan, masterRencana } from '@/db/schema';
 import { auth } from '@/auth';
 import { eq, and, like, desc, sql, gte, lte } from 'drizzle-orm';
+import { LaporanSchema } from '@/lib/validations';
+import { z } from 'zod';
 
 export async function GET(req: NextRequest) {
   const session = await auth();
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const userId = session.user?.id;
-  if (!userId) return NextResponse.json({ error: 'User ID missing' }, { status: 400 });
+  const userId = session.user.id;
 
   const { searchParams } = new URL(req.url);
   const search = searchParams.get('search') || '';
@@ -32,32 +33,37 @@ export async function GET(req: NextRequest) {
     }
 
     if (from) {
-      filters.push(gte(laporan.tanggal, from));
+      filters.push(gte(laporan.tanggalMulai, from));
     }
     if (to) {
-      filters.push(lte(laporan.tanggal, to));
+      filters.push(lte(laporan.tanggalSelesai, to));
     }
 
     const whereClause = and(...filters);
 
     const data = await db.select({
       id: laporan.id,
-      tanggal: laporan.tanggal,
+      tanggalMulai: laporan.tanggalMulai,
+      tanggalSelesai: laporan.tanggalSelesai,
+      jamMulai: laporan.jamMulai,
+      jamSelesai: laporan.jamSelesai,
       rencanaId: laporan.rencanaId,
       kegiatan: laporan.kegiatan,
       progress: laporan.progress,
       capaian: laporan.capaian,
-      buktiUrl: laporan.buktiUrl,
+      buktiUrls: laporan.buktiUrls,
+      masukanSkp: laporan.masukanSkp,
       createdAt: laporan.createdAt,
       rencanaNama: masterRencana.nama,
       rencanaKode: masterRencana.kode,
+      rencanaIki: masterRencana.iki,
     })
     .from(laporan)
     .leftJoin(masterRencana, eq(laporan.rencanaId, masterRencana.id))
     .where(whereClause)
     .limit(limit)
     .offset(offset)
-    .orderBy(desc(laporan.tanggal));
+    .orderBy(desc(laporan.tanggalMulai));
 
     const [totalResult] = await db.select({ count: sql<number>`count(*)` }).from(laporan).where(whereClause);
 
@@ -75,25 +81,25 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const data = await req.json();
-    const userId = session.user?.id;
-    if (!userId) return NextResponse.json({ error: 'User ID missing' }, { status: 400 });
+    const body = await req.json();
+    const userId = session.user.id;
 
-    const result = await db.insert(laporan).values({
-      userId: userId as string,
-      tanggal: data.tanggal,
-      rencanaId: data.rencanaId,
-      kegiatan: data.kegiatan,
-      progress: data.progress,
-      capaian: data.capaian,
-      buktiUrl: data.buktiUrl,
-    });
+    // Validate input
+    const validatedData = LaporanSchema.parse(body);
 
-    return NextResponse.json({ success: true, id: result });
+    const [result] = await db.insert(laporan).values({
+      userId: userId,
+      ...validatedData
+    }).returning();
+
+    return NextResponse.json({ success: true, id: result.id });
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: error.errors[0].message }, { status: 400 });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to create report' }, { status: 500 });
   }

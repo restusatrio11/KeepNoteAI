@@ -3,14 +3,16 @@ import { db } from '@/db';
 import { users } from '@/db/schema';
 import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
+import { RegisterSchema } from '@/lib/validations';
+import { z } from 'zod';
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, email, password } = await req.json();
-
-    if (!name || !email || !password) {
-      return NextResponse.json({ error: 'Semua field wajib diisi.' }, { status: 400 });
-    }
+    const body = await req.json();
+    
+    // Validate input
+    const validatedData = RegisterSchema.parse(body);
+    const { name, email, password } = validatedData;
 
     // Check if user exists
     const [existingUser] = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -28,6 +30,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: error.errors[0].message }, { status: 400 });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Gagal membuat akun.' }, { status: 500 });
   }
