@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon, Copy, Clock } from 'lucide-react';
+import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon, Copy, Clock, Download } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReportModal from './ReportModal';
 import { useToast } from '@/providers/ToastProvider';
@@ -137,10 +137,23 @@ export default function LaporanPage() {
           <h1 style={{ fontWeight: 700, marginBottom: '0.4rem' }}>Histori Pelaporan</h1>
           <p className="text-muted">Kelola dan saring histori laporan kegiatan harian Anda.</p>
         </div>
-        <button onClick={() => setIsAddModalOpen(true)} className="btn btn-primary" style={{ width: 'auto' }}>
-          <Plus size={20} />
-          <span>Tambah Laporan</span>
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button onClick={() => {
+            const params = new URLSearchParams();
+            if (fromDate) params.set('from', fromDate);
+            if (toDate) params.set('to', toDate);
+            if (filterRencana !== 'all') params.set('rencanaId', filterRencana);
+            if (search) params.set('search', search);
+            window.open(`/api/reports/export?${params.toString()}`, '_blank');
+          }} className="btn glass" style={{ width: 'auto' }}>
+            <Download size={20} />
+            <span>Export Excel</span>
+          </button>
+          <button onClick={() => setIsAddModalOpen(true)} className="btn btn-primary" style={{ width: 'auto' }}>
+            <Plus size={20} />
+            <span>Tambah Laporan</span>
+          </button>
+        </div>
       </header>
 
       <div className="card glass" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '2rem', padding: '1.25rem' }}>
