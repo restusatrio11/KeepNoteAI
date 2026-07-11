@@ -230,7 +230,7 @@ async function getActiveRencana(user: any) {
 }
 
 async function handleFile(chatId: string, user: any, fileId: string, caption: string) {
-  await sendMsg(chatId, '⏳ Mengunduh dan menganalisis file...');
+  await sendMsg(chatId, '⏳ Mengunduh file...');
   try {
     const fileRes = await tgFetch('getFile', { file_id: fileId });
     const fileData = await fileRes.json();
@@ -241,48 +241,12 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
     const fileUrl = `https://api.telegram.org/file/bot${TG_TOKEN}/${fileData.result.file_path}`;
     const resp = await fetch(fileUrl);
     const buffer = Buffer.from(await resp.arrayBuffer());
-    const base64 = buffer.toString('base64');
     const filePath = fileData.result.file_path;
     const ext = filePath.split('.').pop()?.toLowerCase() || '';
-    const isImage = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext);
-    const mime = isImage ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream';
-
-    const activeRk = await getActiveRencana(user);
-    const rkContext = activeRk
-      ? `\n\nLaporan ini harus masuk ke RK: *${activeRk.kode}* — ${activeRk.nama}. Cantumkan kode RK di output.`
-      : '';
-
-    await sendMsg(chatId, '🧠 AI sedang menganalisis...');
-
-    const aiResult = await callAI([
-      {
-        role: 'system',
-        content: `Analyze the work document/image. Return JSON: { "kegiatan": "professional activity in Indonesian", "capaian": "achievement description in Indonesian" }${rkContext}`,
-      },
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: caption || 'Analyze this work activity.' },
-          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
-        ],
-      },
-    ]);
-
-    if (!aiResult.kegiatan) {
-      await sendMsg(chatId, '❌ Gagal menganalisis. Pastikan file berisi kegiatan kerja.');
-      return;
-    }
-
-    let rencana = activeRk;
-    if (!rencana) {
-      const rencanaList = await getUserRencana(user.id);
-      rencana = findBestRencana(rencanaList, aiResult.rencanaHint || aiResult.kegiatan);
-    }
-
-    if (!rencana) {
-      await sendMsg(chatId, `📋 *Hasil Analisis:*\n\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || '-'}\n\n⚠️ Tidak ada Rencana Kerja yang cocok. Ketik /rk untuk memilih target RK.`);
-      return;
-    }
+    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+      : ext === 'png' ? 'image/png'
+      : ext === 'pdf' ? 'application/pdf'
+      : 'application/octet-stream';
 
     await sendMsg(chatId, '📤 Mengunggah ke Google Drive...');
 
@@ -298,14 +262,49 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       }
     } catch (e) { console.error('Upload error:', e); }
 
+    let kegiatan = caption?.trim();
+    let capaian = 'Tercapai sesuai target.';
+
+    if (!kegiatan) {
+      await sendMsg(chatId, '🧠 AI menganalisis gambar...');
+      const base64 = buffer.toString('base64');
+      const aiResult = await callAI([
+        { role: 'system', content: 'Analyze this work document/image. Return JSON: { "kegiatan": "professional activity in Indonesian", "capaian": "achievement description in Indonesian" }' },
+        { role: 'user', content: [{ type: 'text', text: 'Describe this work activity.' }, { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } }] },
+      ]);
+      kegiatan = aiResult.kegiatan;
+      capaian = aiResult.capaian || capaian;
+      if (!kegiatan) {
+        await sendMsg(chatId, '❌ Tidak ada deskripsi. Kirim foto dengan caption atau ketik deskripsi kegiatan.');
+        return;
+      }
+    }
+
+    const activeRk = await getActiveRencana(user);
+    let rencana = activeRk;
+    if (!rencana) {
+      const rencanaList = await getUserRencana(user.id);
+      const rkCodes = rencanaList.map((r: any) => `${r.kode}: ${r.nama}`).join('\n');
+      const aiHint = await callAI([
+        { role: 'system', content: `Match the activity to one of these RK. Return JSON: { "rencanaHint": "the RK code" }\nAvailable RK:\n${rkCodes}` },
+        { role: 'user', content: kegiatan },
+      ]);
+      rencana = findBestRencana(rencanaList, aiHint.rencanaHint || kegiatan);
+    }
+
+    if (!rencana) {
+      await sendMsg(chatId, `📋 *Kegiatan:* ${kegiatan}\n\n⚠️ Tidak ada RK yang cocok. Ketik /rk untuk memilih target RK.`);
+      return;
+    }
+
     const today = new Date().toISOString().split('T')[0];
     await db.insert(laporan).values({
       userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
-      kegiatan: aiResult.kegiatan, progress: 100, capaian: aiResult.capaian || 'Tercapai sesuai target.',
+      kegiatan, progress: 100, capaian,
       buktiUrls: buktiUrls || null,
     });
 
-    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || 'Tercapai'}\n*Progres:* 100%\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
+    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${kegiatan}\n*Capaian:* ${capaian}\n*Progres:* 100%\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
   } catch (e) {
     console.error('File handler error:', e);
     await sendMsg(chatId, '❌ Terjadi kesalahan. Coba lagi nanti.');
@@ -336,7 +335,12 @@ async function handleText(chatId: string, user: any, text: string) {
     let rencana = activeRk;
     if (!rencana) {
       const rencanaList = await getUserRencana(user.id);
-      rencana = findBestRencana(rencanaList, aiResult.rencanaHint || aiResult.kegiatan);
+      const rkCodes = rencanaList.map((r: any) => `${r.kode}: ${r.nama}`).join('\n');
+      const aiHint = await callAI([
+        { role: 'system', content: `Match the activity to one of these RK. Return JSON: { "rencanaHint": "the RK code" }\nAvailable RK:\n${rkCodes}` },
+        { role: 'user', content: text },
+      ]);
+      rencana = findBestRencana(rencanaList, aiHint.rencanaHint || aiResult.kegiatan);
     }
 
     if (!rencana) {
