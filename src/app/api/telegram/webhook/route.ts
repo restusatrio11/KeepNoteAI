@@ -265,7 +265,14 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
     let kegiatan = caption?.trim();
     let capaian = 'Tercapai sesuai target.';
 
-    if (!kegiatan) {
+    if (kegiatan) {
+      await sendMsg(chatId, '🧠 AI merapikan deskripsi...');
+      const aiResult = await callAI([
+        { role: 'system', content: 'Convert casual work descriptions into professional Indonesian for an official report. Return JSON: { "kegiatan": "professional activity description", "capaian": "achievement description" }' },
+        { role: 'user', content: kegiatan },
+      ]);
+      if (aiResult.kegiatan) { kegiatan = aiResult.kegiatan; capaian = aiResult.capaian || capaian; }
+    } else {
       await sendMsg(chatId, '🧠 AI menganalisis gambar...');
       const base64 = buffer.toString('base64');
       const aiResult = await callAI([
