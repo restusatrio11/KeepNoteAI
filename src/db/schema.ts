@@ -8,6 +8,7 @@ export const users = pgTable('users', {
   telegramChatId: text('telegram_chat_id'),
   verificationCode: text('verification_code'),
   verificationExpiry: timestamp('verification_expiry'),
+  selectedRencanaId: uuid('selected_rencana_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
