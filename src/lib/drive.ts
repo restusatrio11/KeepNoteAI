@@ -105,6 +105,7 @@ export async function createFolder(name: string, drive: DriveClient) {
       mimeType: 'application/vnd.google-apps.folder',
     },
     fields: 'id',
+    supportsAllDrives: true,
   });
   return response.data.id;
 }
@@ -143,6 +144,7 @@ export async function uploadToDrive(
         body: Readable.from(file),
       },
       fields: 'id, webViewLink',
+      supportsAllDrives: true,
     });
 
     return {
@@ -168,6 +170,7 @@ export async function uploadToDrive(
           body: Readable.from(file),
         },
         fields: 'id, webViewLink',
+        supportsAllDrives: true,
       });
       return {
         id: response.data.id,

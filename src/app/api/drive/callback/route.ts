@@ -32,8 +32,14 @@ export async function GET(req: NextRequest) {
     const refreshToken = tokens.refresh_token ? encryptSecret(tokens.refresh_token) : null;
     const email = tokens.access_token ? await getUserEmail(tokens.access_token) : '';
 
-    let folderId: string | null = null;
-    if (refreshToken && tokens.access_token) {
+    const [existing] = await db
+      .select({ driveFolderId: userSettings.driveFolderId })
+      .from(userSettings)
+      .where(eq(userSettings.userId, session.user.id))
+      .limit(1);
+
+    let folderId: string | null = existing?.driveFolderId ?? null;
+    if (!folderId && refreshToken && tokens.access_token) {
       const drive = await getDriveClientFromTokens(tokens.access_token, tokens.refresh_token);
       folderId = await createFolder('KeepNoteAI', drive);
     }
