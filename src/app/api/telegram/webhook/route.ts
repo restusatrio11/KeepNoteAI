@@ -333,8 +333,7 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
 
     let buktiUrls = '';
     try {
-      const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientFromTokens } = await import('@/lib/drive');
-      const { decryptSecret } = await import('@/lib/portal/crypto');
+      const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientForUser } = await import('@/lib/drive');
       const { userSettings } = await import('@/db/schema');
       const [settings] = await db.select().from(userSettings)
         .where(eq(userSettings.userId, user.id as any)).limit(1);
@@ -342,18 +341,22 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
         let drive;
         if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
           drive = getDriveClientFromServiceAccount();
-        } else if (settings.driveRefreshToken) {
-          drive = getDriveClientFromTokens(
-            settings.driveAccessToken ? decryptSecret(settings.driveAccessToken) : undefined,
-            decryptSecret(settings.driveRefreshToken)
-          );
+        } else {
+          drive = await getDriveClientForUser(user.id);
         }
-        if (drive) {
-          const result = await uploadToDrive(buffer, filePath.split('/').pop() || 'file', mime, settings.driveFolderId, drive);
-          if (result?.link) buktiUrls = JSON.stringify([result.link]);
+        const result = await uploadToDrive(buffer, filePath.split('/').pop() || 'file', mime, settings.driveFolderId, drive);
+        if (result?.link) buktiUrls = JSON.stringify([result.link]);
+        if (result?.fallback) {
+          await sendMsg(chatId, '⚠️ Folder tujuan Drive tidak bisa ditulis, file disimpan di folder KeepNoteAI Anda.');
         }
+      } else {
+        await sendMsg(chatId, '⚠️ Folder tujuan Drive belum diatur di Pengaturan.');
       }
-    } catch (e) { console.error('Upload error:', e); }
+    } catch (e: any) {
+      console.error('Upload error:', e);
+      const msg = String(e?.response?.data?.error?.message || e?.message || e);
+      await sendMsg(chatId, `⚠️ Gagal unggah ke Drive: ${msg}`);
+    }
 
     let kegiatan = caption?.trim();
     let capaian = 'Tercapai sesuai target.';
