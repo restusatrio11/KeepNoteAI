@@ -4,6 +4,7 @@ import { db } from './db';
 import { users } from './db/schema';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
+import { verifyCaptcha } from './lib/captcha';
 
 declare module 'next-auth' {
   interface Session {
@@ -20,9 +21,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
+        captcha: { label: 'Captcha', type: 'text' },
+        captchaToken: { label: 'CaptchaToken', type: 'text' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
+
+        if (!verifyCaptcha(credentials.captchaToken as string, credentials.captcha as string)) {
+          return null;
+        }
 
         const [user] = await db.select().from(users).where(eq(users.email, credentials.email as string)).limit(1);
 

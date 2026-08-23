@@ -5,11 +5,17 @@ import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { RegisterSchema } from '@/lib/validations';
 import { z } from 'zod';
+import { verifyCaptcha } from '@/lib/captcha';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    
+
+    // Verify self-made captcha first
+    if (!verifyCaptcha(body.captchaToken, body.captcha)) {
+      return NextResponse.json({ error: 'Captcha salah atau kedaluwarsa.' }, { status: 400 });
+    }
+
     // Validate input
     const validatedData = RegisterSchema.parse(body);
     const { name, email, password } = validatedData;

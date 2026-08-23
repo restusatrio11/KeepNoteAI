@@ -1,20 +1,46 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { LogIn, Loader2, Mail, Lock } from 'lucide-react';
+import { LogIn, Loader2, Mail, Lock, RefreshCw } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaSvg, setCaptchaSvg] = useState('');
+  const [captchaInput, setCaptchaInput] = useState('');
+  const [captchaLoading, setCaptchaLoading] = useState(false);
+
+  async function loadCaptcha() {
+    setCaptchaLoading(true);
+    setCaptchaInput('');
+    try {
+      const res = await fetch('/api/captcha');
+      if (res.ok) {
+        const data = await res.json();
+        setCaptchaToken(data.token);
+        setCaptchaSvg(data.svg);
+      }
+    } catch {} finally { setCaptchaLoading(false); }
+  }
+
+  useEffect(() => { loadCaptcha(); }, []);
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true);
     setError('');
+
+    if (!captchaInput.trim()) {
+      setError('Isi kode captcha terlebih dahulu.');
+      return;
+    }
+
+    setLoading(true);
 
     const formData = new FormData(e.currentTarget);
     const email = formData.get('email') as string;
@@ -24,17 +50,21 @@ export default function LoginPage() {
       const res = await signIn('credentials', {
         email,
         password,
+        captcha: captchaInput,
+        captchaToken,
         redirect: false,
       });
 
       if (res?.error) {
-        setError('Email atau password salah.');
+        setError('Email, password, atau captcha salah.');
+        loadCaptcha();
       } else {
         router.push('/');
         router.refresh();
       }
-    } catch (err) {
+    } catch {
       setError('Terjadi kesalahan saat masuk.');
+      loadCaptcha();
     } finally {
       setLoading(false);
     }
@@ -118,6 +148,65 @@ export default function LoginPage() {
                 }} 
               />
             </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Captcha</label>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'stretch' }}>
+              <div
+                role="img"
+                aria-label="Captcha"
+                dangerouslySetInnerHTML={{ __html: captchaSvg }}
+                style={{
+                  borderRadius: '12px',
+                  border: '1px solid var(--border)',
+                  overflow: 'hidden',
+                  flex: '1 1 auto',
+                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#0f0f15',
+                }}
+              />
+              <button
+                type="button"
+                onClick={loadCaptcha}
+                disabled={captchaLoading}
+                aria-label="Muat ulang captcha"
+                style={{
+                  flexShrink: 0,
+                  width: '44px',
+                  borderRadius: '12px',
+                  backgroundColor: 'rgba(255,255,255,0.04)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {captchaLoading ? <Loader2 size={18} className="spin" /> : <RefreshCw size={18} />}
+              </button>
+            </div>
+            <input
+              type="text"
+              value={captchaInput}
+              onChange={(e) => setCaptchaInput(e.target.value.toUpperCase())}
+              placeholder="Ketik kode di atas"
+              autoComplete="off"
+              style={{
+                width: '100%',
+                padding: '0.8rem 1rem',
+                borderRadius: '12px',
+                backgroundColor: 'rgba(255,255,255,0.04)',
+                border: '1px solid var(--border)',
+                color: 'white',
+                letterSpacing: '0.15em',
+                fontWeight: 600,
+              }}
+            />
           </div>
 
           <button type="submit" disabled={loading} className="btn btn-primary" style={{ padding: '0.9rem', marginTop: '0.5rem' }}>
