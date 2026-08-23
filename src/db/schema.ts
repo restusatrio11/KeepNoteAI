@@ -120,3 +120,12 @@ export const notulen = pgTable('notulen', {
   dokumentasiUrls: text('dokumentasi_urls'), // JSON string for multiple image URLs
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+export const feedback = pgTable('feedback', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id),
+  name: text('name').notNull(),
+  comment: text('comment').notNull(),
+  rating: integer('rating').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});

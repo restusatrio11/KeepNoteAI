@@ -17,6 +17,7 @@ export default function Navigation() {
     { href: '/notulen', label: 'Notulen', icon: Sparkles },
     { href: '/rencana', label: 'Rencana', icon: Target },
     { href: '/kalender', label: 'Kalender', icon: CalendarDays },
+    { href: '/tentang', label: 'Tentang', icon: Info },
     { href: '/settings', label: 'Setelan', icon: Settings },
   ];
 

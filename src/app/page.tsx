@@ -9,6 +9,7 @@ import DashboardFilter from '@/components/DashboardFilter';
 import ReportHealth from '@/components/ReportHealth';
 import PlanningBoard from '@/components/PlanningBoard';
 import WorkflowSection from '@/components/WorkflowSection';
+import GuideModal from '@/components/GuideModal';
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const session = await auth();
@@ -80,6 +81,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             <Download size={20} />
             <span>Ekspor Excel</span>
           </a>
+          <GuideModal />
         </div>
       </header>
 

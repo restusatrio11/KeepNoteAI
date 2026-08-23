@@ -59,6 +59,7 @@ export default function LoginPage() {
         setError('Email, password, atau captcha salah.');
         loadCaptcha();
       } else {
+        try { sessionStorage.setItem('showGuideAfterLogin', '1'); } catch {}
         router.push('/');
         router.refresh();
       }
