@@ -333,18 +333,25 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
 
     let buktiUrls = '';
     try {
-      const { uploadToDrive, getDriveClientFromTokens } = await import('@/lib/drive');
+      const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientFromTokens } = await import('@/lib/drive');
       const { decryptSecret } = await import('@/lib/portal/crypto');
       const { userSettings } = await import('@/db/schema');
       const [settings] = await db.select().from(userSettings)
         .where(eq(userSettings.userId, user.id as any)).limit(1);
-      if (settings?.driveRefreshToken && settings?.driveFolderId) {
-        const drive = await getDriveClientFromTokens(
-          settings.driveAccessToken ? decryptSecret(settings.driveAccessToken) : undefined,
-          decryptSecret(settings.driveRefreshToken)
-        );
-        const result = await uploadToDrive(buffer, filePath.split('/').pop() || 'file', mime, settings.driveFolderId, drive);
-        if (result?.link) buktiUrls = JSON.stringify([result.link]);
+      if (settings?.driveFolderId) {
+        let drive;
+        if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+          drive = getDriveClientFromServiceAccount();
+        } else if (settings.driveRefreshToken) {
+          drive = getDriveClientFromTokens(
+            settings.driveAccessToken ? decryptSecret(settings.driveAccessToken) : undefined,
+            decryptSecret(settings.driveRefreshToken)
+          );
+        }
+        if (drive) {
+          const result = await uploadToDrive(buffer, filePath.split('/').pop() || 'file', mime, settings.driveFolderId, drive);
+          if (result?.link) buktiUrls = JSON.stringify([result.link]);
+        }
       }
     } catch (e) { console.error('Upload error:', e); }
 

@@ -3,7 +3,7 @@ import { auth } from '@/auth';
 import { db } from '@/db';
 import { userSettings, masterRencana } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { uploadToDrive, getDriveClientForUser } from '@/lib/drive';
+import { uploadToDrive, getDriveClientForUser, getDriveClientFromServiceAccount } from '@/lib/drive';
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,15 +17,22 @@ export async function POST(req: NextRequest) {
     // Get user's drive folder ID
     const [settings] = await db.select().from(userSettings).where(eq(userSettings.userId, userId)).limit(1);
 
-    if (!settings?.driveRefreshToken || !settings?.driveFolderId) {
+    if (!settings?.driveFolderId) {
+      return NextResponse.json({ error: 'Folder tujuan Drive belum diatur. Atur di Pengaturan.' }, { status: 400 });
+    }
+    if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON && !settings?.driveRefreshToken) {
       return NextResponse.json({ error: 'Google Drive belum dihubungkan. Buka Pengaturan untuk menghubungkan akun Drive Anda.' }, { status: 400 });
     }
 
     let drive;
     try {
-      drive = await getDriveClientForUser(userId);
+      if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        drive = getDriveClientFromServiceAccount();
+      } else {
+        drive = await getDriveClientForUser(userId);
+      }
     } catch {
-      return NextResponse.json({ error: 'Google Drive belum dihubungkan. Buka Pengaturan untuk menghubungkan akun Drive Anda.' }, { status: 400 });
+      return NextResponse.json({ error: 'Google Drive belum dikonfigurasi. Hubungkan akun Drive di Pengaturan atau set GOOGLE_SERVICE_ACCOUNT_JSON.' }, { status: 400 });
     }
 
     const formData = await req.formData();
@@ -93,7 +100,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ 
       success: true, 
       fileId: result.id, 
-      link: result.link 
+      link: result.link,
+      fallback: result.fallback || false,
+      message: result.fallback
+        ? 'Folder tujuan tidak bisa ditulis, file disimpan di folder KeepNoteAI milik Anda.'
+        : undefined,
     });
 
   } catch (error: any) {
