@@ -1,60 +1,106 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useToast } from '@/providers/ToastProvider';
-import { Save, Folder, Loader2, Info, Rocket, CheckCircle2, Smartphone, Link2, Link2Off } from 'lucide-react';
-import { saveSettings, getSettings, setupAutoDrive, savePortalCredentials, getPortalCredentials, saveRencanaPortalMapping, getPortalRencanaList } from './actions';
+import { Save, Folder, Loader2, Info, CheckCircle2, Smartphone, Link2, Link2Off, HelpCircle } from 'lucide-react';
+import Modal from '@/components/Modal';
+import { getSettings, savePortalCredentials, getPortalCredentials, saveRencanaPortalMapping, getPortalRencanaList } from './actions';
 
 export default function SettingsPage() {
   const { showToast } = useToast();
-  const [loading, setLoading] = useState(false);
-  const [driveLink, setDriveLink] = useState('');
+  const [driveConnected, setDriveConnected] = useState(false);
+  const [driveEmail, setDriveEmail] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
-  const [autoLoading, setAutoLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [help, setHelp] = useState<null | 'drive' | 'telegram' | 'portal'>(null);
+  const [driveFolderId, setDriveFolderId] = useState<string | null>(null);
+  const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
+  const [selectedFolder, setSelectedFolder] = useState('');
+  const [newFolder, setNewFolder] = useState('');
+  const [savingFolder, setSavingFolder] = useState(false);
+
+  async function loadFolders(currentId?: string) {
+    try {
+      const res = await fetch('/api/drive/folder');
+      if (res.ok) {
+        const data = await res.json();
+        const fl = data.folders || [];
+        setFolders(fl);
+        const cur = currentId || driveFolderId;
+        setSelectedFolder(cur && fl.find((f) => f.id === cur) ? cur : (fl[0]?.id || ''));
+      } else {
+        showToast('Gagal memuat folder Drive. Putuskan lalu Hubungkan ulang Google Drive (izin berubah).', 'error');
+      }
+    } catch {
+      showToast('Gagal memuat folder Drive. Periksa koneksi Drive Anda.', 'error');
+    }
+  }
 
   useEffect(() => {
     async function load() {
       const settings = await getSettings();
-      if (settings?.driveFolderId) {
-        setDriveLink(settings.driveFolderId);
+      if (settings) {
+        setDriveConnected(settings.driveConnected);
+        setDriveEmail(settings.driveEmail || null);
+        setDriveFolderId(settings.driveFolderId || null);
+        if (settings.driveConnected) loadFolders(settings.driveFolderId || undefined);
       }
       setFetching(false);
     }
     load();
   }, []);
 
-  async function handleAutoSetup() {
-    if (!confirm('Sistem akan membuat folder privat baru di Master Drive dan mengundang email Anda sebagai Editor. Lanjutkan?')) return;
-    
-    setAutoLoading(true);
+  async function handleSaveFolder() {
+    setSavingFolder(true);
     try {
-      const res = await setupAutoDrive();
-      if (res.success) {
-        setDriveLink(res.folderId);
-        showToast('Berhasil! Folder dibuat & Undangan dikirim ke email Anda.', 'success');
+      const body = selectedFolder
+        ? { folderId: selectedFolder }
+        : { folderName: newFolder.trim() };
+      const res = await fetch('/api/drive/folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDriveFolderId(data.folderId);
+        setNewFolder('');
+        showToast('Folder tujuan Drive diperbarui.', 'success');
+        loadFolders(data.folderId);
+      } else {
+        showToast(data.error || 'Gagal menyimpan folder.', 'error');
       }
-    } catch (error: any) {
-      showToast(error.message || 'Gagal menyiapkan Drive otomatis', 'error');
+    } catch {
+      showToast('Gagal menyimpan folder.', 'error');
     } finally {
-      setAutoLoading(false);
+      setSavingFolder(false);
     }
   }
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setLoading(true);
-    const formData = new FormData(e.currentTarget);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const d = params.get('drive');
+    if (d === 'connected') showToast('Google Drive berhasil dihubungkan ke akun Anda!', 'success');
+    if (d === 'error') showToast('Gagal menghubungkan Google Drive. Coba lagi.', 'error');
+    if (d === 'config') showToast('Google Drive belum dikonfigurasi. Isi GOOGLE_CLIENT_ID & GOOGLE_CLIENT_SECRET di file .env (lihat panduan).', 'error');
+    if (d) window.history.replaceState({}, '', '/settings');
+  }, []);
 
+  function handleConnect() {
+    window.location.href = '/api/drive/auth';
+  }
+
+  async function handleDisconnect() {
+    setBusy(true);
     try {
-      const res = await saveSettings(formData);
-      if (res.success) {
-        showToast('Pengaturan berhasil disimpan!', 'success');
-        setDriveLink(res.folderId || '');
-      }
-    } catch (error) {
-      showToast('Gagal menyimpan pengaturan.', 'error');
+      await fetch('/api/drive/disconnect', { method: 'POST' });
+      setDriveConnected(false);
+      setDriveEmail(null);
+      showToast('Google Drive diputuskan.', 'success');
+    } catch {
+      showToast('Gagal memutuskan koneksi.', 'error');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
@@ -68,93 +114,200 @@ export default function SettingsPage() {
       </header>
 
       <div className="card glass" style={{ padding: '2.5rem' }}>
-        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Folder size={20} color="var(--primary)" />
-          Integrasi Google Drive
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Folder size={20} color="var(--primary)" />
+            Integrasi Google Drive
+          </h2>
+          <HintButton onClick={() => setHelp('drive')} />
+        </div>
 
-        <div style={{ 
-          backgroundColor: 'rgba(59, 130, 246, 0.05)', 
-          border: '1px solid rgba(59, 130, 246, 0.2)', 
-          padding: '1.5rem', 
-          borderRadius: '16px',
-          marginBottom: '2.5rem',
-        }}>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-            <div style={{ padding: '0.75rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderRadius: '12px', color: 'var(--primary)' }}>
-              <Rocket size={24} />
+        <p style={{ fontSize: '0.9rem', marginBottom: '1.5rem', color: 'var(--text-muted)' }}>
+          Hubungkan akun Google Drive <strong>pribadi Anda</strong>. Foto &amp; bukti yang diunggah akan tersimpan di Drive Anda sendiri — tidak tercampur dengan user lain.
+        </p>
+
+        {driveConnected ? (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', padding: '1rem', backgroundColor: 'rgba(16,185,129,0.05)', borderRadius: '12px', border: '1px solid var(--success)' }}>
+              <CheckCircle2 size={24} color="var(--success)" />
+              <div>
+                <p style={{ fontWeight: 700, color: 'var(--success)' }}>Terhubung</p>
+                <p style={{ fontSize: '0.8rem', opacity: 0.7 }}>{driveEmail}</p>
+              </div>
             </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.25rem' }}>Setup Drive Otomatis</h3>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
-                Malas ribet? Biarkan AI yang membuatkan folder dan mengundang email Anda otomatis.
+
+            <div style={{ marginTop: '0.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border)' }}>
+              <label style={{ fontSize: '0.9rem', fontWeight: 500, display: 'block', marginBottom: '0.5rem' }}>
+                Folder Tujuan di Drive Anda
+              </label>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <FolderSelect
+                  folders={folders}
+                  value={selectedFolder}
+                  onSelect={setSelectedFolder}
+                  placeholder="Cari folder di Drive Anda..."
+                />
+                <button onClick={handleSaveFolder} disabled={savingFolder} className="btn btn-primary" style={{ padding: '0.7rem 1.25rem' }}>
+                  {savingFolder ? <Loader2 size={16} className="spin" /> : <Folder size={16} />}
+                  <span>{savingFolder ? 'Menyimpan...' : 'Pakai Folder Ini'}</span>
+                </button>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.75rem 0 0.4rem' }}>
+                Atau buat folder baru / tempel link folder Drive:
               </p>
-              <button 
-                onClick={handleAutoSetup}
-                disabled={autoLoading}
-                className="btn btn-primary" 
-                style={{ height: '48px', padding: '0 1.5rem', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)' }}
-              >
-                {autoLoading ? <Loader2 size={18} className="spin" /> : <CheckCircle2 size={18} />}
-                <span>{autoLoading ? 'Sedang Memproses...' : 'Mulai Setup Otomatis'}</span>
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={newFolder}
+                  onChange={(e) => setNewFolder(e.target.value)}
+                  placeholder="Nama folder, atau tempel https://drive.google.com/drive/folders/..."
+                  className="input-base"
+                  style={{ flex: '1 1 220px', minWidth: 0, padding: '0.7rem 0.8rem', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', color: 'white' }}
+                />
+                <button onClick={handleSaveFolder} disabled={savingFolder || !newFolder.trim()} className="btn glass">
+                  <span>Buat &amp; Pakai</span>
+                </button>
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.6rem' }}>
+                Bukti laporan akan disimpan ke folder yang Anda pilih di Drive pribadi Anda.
+              </p>
             </div>
-          </div>
-        </div>
 
-        <div style={{ marginBottom: '2rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', opacity: 0.5 }}>
-            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border)' }} />
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>Atau Konfigurasi Manual</span>
-            <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border)' }} />
+            <button onClick={handleDisconnect} disabled={busy} className="btn glass" style={{ color: 'var(--error)', marginTop: '1.25rem' }}>
+              {busy ? <Loader2 size={16} className="spin" /> : <Link2Off size={16} />}
+              <span>{busy ? 'Memutuskan...' : 'Putuskan Google Drive'}</span>
+            </button>
           </div>
-          <ol style={{ paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            <li>Bagikan folder Drive Anda dengan email Service Account sebagai <strong>Editor</strong>.</li>
-            <li>Tempelkan Link folder atau ID folder di kolom di bawah ini.</li>
-          </ol>
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label style={{ fontSize: '0.9rem', fontWeight: 500 }}>Link / ID Folder Google Drive</label>
-            <input 
-              type="text" 
-              name="driveLink" 
-              value={driveLink}
-              onChange={(e) => setDriveLink(e.target.value)}
-              placeholder="https://drive.google.com/drive/folders/..." 
-              required
-              className="input-base"
-              style={{ width: '100%', padding: '0.85rem 1rem', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', color: 'white' }} 
-            />
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Setiap foto yang Anda unggah akan disimpan ke folder ini secara otomatis.
-            </p>
-          </div>
-
-          <button type="submit" disabled={loading} className="btn btn-primary" style={{ alignSelf: 'flex-start', padding: '0.85rem 2rem' }}>
-            {loading ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
-            <span>{loading ? 'Menyimpan...' : 'Simpan Pengaturan'}</span>
+        ) : (
+          <button onClick={handleConnect} className="btn btn-primary" style={{ height: '48px', padding: '0 1.5rem' }}>
+            <Folder size={18} />
+            <span>Hubungkan Google Drive</span>
           </button>
-        </form>
+        )}
       </div>
 
       <div className="card glass" style={{ padding: '2.5rem', marginTop: '2rem' }}>
-        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Smartphone size={20} color="var(--primary)" />
-          Integrasi Telegram
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Smartphone size={20} color="var(--primary)" />
+            Integrasi Telegram
+          </h2>
+          <HintButton onClick={() => setHelp('telegram')} />
+        </div>
         <TelegramSection />
       </div>
 
       <div className="card glass" style={{ padding: '2.5rem', marginTop: '2rem' }}>
-        <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Link2 size={20} color="var(--primary)" />
-          Integrasi e-Kinerja / SKP
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Link2 size={20} color="var(--primary)" />
+            Integrasi e-Kinerja / SKP
+          </h2>
+          <HintButton onClick={() => setHelp('portal')} />
+        </div>
         <PortalSection />
       </div>
+
+      <Modal isOpen={help === 'drive'} onClose={() => setHelp(null)} title="Cara: Integrasi Google Drive">
+        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+          Menghubungkan akun Google Drive <strong>pribadi Anda</strong> agar semua bukti laporan tersimpan di Drive Anda sendiri (tidak tercampur user lain).
+        </p>
+        <ol style={stepList}>
+          <li>Klik tombol <b>Hubungkan Google Drive</b> di bawah ini.</li>
+          <li>Anda diarahkan ke login Google — pilih akun Drive Anda, lalu klik <b>Izinkan</b>.</li>
+          <li>Kembali ke halaman ini, status akan berubah menjadi <b>“Terhubung sebagai &lt;email Anda&gt;”</b>.</li>
+          <li>Setelah terhubung, pilih <b>Folder Tujuan</b> di Drive Anda (atau buat folder baru, mis. <b>KeepNoteAI</b>). Bukti laporan akan disimpan ke folder tersebut.</li>
+        </ol>
+        <p style={noteBox}>Ingin berhenti? Klik <b>Putuskan Google Drive</b>. File yang sudah tersimpan tetap ada di Drive Anda.</p>
+      </Modal>
+
+      <Modal isOpen={help === 'telegram'} onClose={() => setHelp(null)} title="Cara: Integrasi Telegram">
+        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+          Kirim laporan langsung dari HP lewat bot Telegram — otomatis masuk ke akun Anda. Lakukan sekali saja.
+        </p>
+        <ol style={stepList}>
+          <li>Di halaman ini, klik <b>Generate Kode</b>, lalu <b>salin kode 6 huruf</b> yang muncul.</li>
+          <li>Buka Telegram, chat bot <b>@KipappAIbot</b>, kirim perintah:<br /><code style={codeStyle}>/link KODE</code></li>
+          <li>Bot membalas <b>“Berhasil terhubung”</b>. Chat Telegram Anda kini terikat akun Anda.</li>
+          <li>Kirim <b>foto/dokumen</b> (beri caption) atau <b>teks</b> → bot membuat laporan & menyimpannya ke akun Anda.</li>
+        </ol>
+        <p style={noteBox}>Perintah lain: <code style={codeStyle}>/rk</code> (lihat/pilih Rencana Kinerja), <code style={codeStyle}>/status</code>, <code style={codeStyle}>/unlink</code> (putuskan), <code style={codeStyle}>/help</code>.</p>
+      </Modal>
+
+      <Modal isOpen={help === 'portal'} onClose={() => setHelp(null)} title="Cara: Integrasi e-Kinerja / SKP">
+        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+          Mengisi kredensial portal agar laporan bisa dikirim ke &amp; rencana diambil dari e-Kinerja BPS. Data dienkripsi per-user.
+        </p>
+        <ol style={stepList}>
+          <li>Buka portal e-Kinerja di browser, lalu buka <b>DevTools (F12) → tab Network</b>.</li>
+          <li>Muat/isi halaman, cari request ke <code style={codeStyle}>/api/...</code>, lalu salin dua header:
+            <ul style={{ marginTop: '0.5rem' }}>
+              <li><b>Cookie</b> — seluruh nilainya.</li>
+              <li><b>X-Auth</b> — berbentuk <code style={codeStyle}>Bearer eyJ...</code> (ini JWT).</li>
+            </ul>
+          </li>
+          <li>Isi form di bawah: <b>URL Portal</b>, <b>Cookie Sesi</b>, <b>X-Auth</b>, dan <b>SKP ID</b> (mis. <code style={codeStyle}>1344761</code>).</li>
+          <li>Klik <b>Simpan</b> lalu <b>Test Koneksi</b>. Jika muncul “Koneksi portal OK”, siap digunakan.</li>
+        </ol>
+        <p style={noteBox}>⚠️ <b>X-Auth berlaku ±24 jam.</b> Jika sync gagal, salin ulang Cookie &amp; X-Auth dari DevTools, lalu Simpan &amp; Test lagi.</p>
+      </Modal>
     </div>
+  );
+}
+
+const stepList: CSSProperties = {
+  paddingLeft: '1.25rem',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '0.6rem',
+  fontSize: '0.88rem',
+  color: 'var(--text)',
+  lineHeight: 1.5,
+};
+
+const noteBox: CSSProperties = {
+  marginTop: '1rem',
+  padding: '0.85rem 1rem',
+  borderRadius: '12px',
+  backgroundColor: 'rgba(59,130,246,0.07)',
+  border: '1px solid rgba(59,130,246,0.25)',
+  fontSize: '0.82rem',
+  color: 'var(--text-muted)',
+};
+
+const codeStyle: CSSProperties = {
+  display: 'inline-block',
+  padding: '0.1rem 0.45rem',
+  backgroundColor: 'rgba(0,0,0,0.35)',
+  borderRadius: '6px',
+  fontSize: '0.8rem',
+  fontFamily: 'monospace',
+  color: 'var(--accent)',
+};
+
+function HintButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Cara penggunaan"
+      aria-label="Cara penggunaan"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 30,
+        height: 30,
+        borderRadius: '50%',
+        backgroundColor: 'rgba(59,130,246,0.12)',
+        color: 'var(--primary)',
+        border: '1px solid rgba(59,130,246,0.3)',
+        cursor: 'pointer',
+        flexShrink: 0,
+      }}
+    >
+      <HelpCircle size={18} />
+    </button>
   );
 }
 
@@ -409,6 +562,59 @@ function RencanaRow({ item, options, saving, onSave }: { item: any; options: { r
   );
 }
 
+function FolderSelect({ folders, value, onSelect, placeholder }: {
+  folders: { id: string; name: string }[];
+  value: string;
+  onSelect: (id: string) => void;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const s = folders.find((f) => f.id === value);
+    setText(s ? s.name : '');
+  }, [value, folders]);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const q = text.trim().toLowerCase();
+  const filtered = q ? folders.filter((f) => f.name.toLowerCase().includes(q)) : folders;
+
+  return (
+    <div ref={ref} style={{ position: 'relative', flex: '1 1 220px', minWidth: 0 }}>
+      <input
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => { setText(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        className="input-base"
+        style={{ width: '100%', padding: '0.7rem 0.8rem', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', color: 'white' }}
+      />
+      {open && filtered.length > 0 && (
+        <ul style={{ position: 'absolute', zIndex: 50, top: 'calc(100% + 4px)', left: 0, right: 0, maxHeight: 240, overflowY: 'auto', backgroundColor: '#15151c', border: '1px solid var(--border)', borderRadius: 8, margin: 0, padding: 0, listStyle: 'none', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+          {filtered.map((f) => (
+            <li
+              key={f.id}
+              onMouseDown={() => { setText(f.name); onSelect(f.id); setOpen(false); }}
+              style={{ padding: '0.5rem 0.7rem', fontSize: '0.85rem', cursor: 'pointer', borderBottom: '1px solid var(--border)', color: f.id === value ? 'var(--accent)' : 'white', backgroundColor: f.id === value ? 'rgba(255,255,255,0.06)' : 'transparent' }}
+            >
+              {f.name}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function SearchableSelect({ options, value, onSelect, placeholder, disabled }: {
   options: { rkid: string; rencanakinerja: string }[];
   value: string;
@@ -574,3 +780,4 @@ function TelegramSection() {
     </div>
   );
 }
+

@@ -3,7 +3,7 @@ import { auth } from '@/auth';
 import { db } from '@/db';
 import { userSettings, masterRencana } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { uploadToDrive } from '@/lib/drive';
+import { uploadToDrive, getDriveClientForUser } from '@/lib/drive';
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,8 +17,15 @@ export async function POST(req: NextRequest) {
     // Get user's drive folder ID
     const [settings] = await db.select().from(userSettings).where(eq(userSettings.userId, userId)).limit(1);
 
-    if (!settings?.driveFolderId) {
-      return NextResponse.json({ error: 'Google Drive folder belum dikonfigurasi di Pengaturan.' }, { status: 400 });
+    if (!settings?.driveRefreshToken || !settings?.driveFolderId) {
+      return NextResponse.json({ error: 'Google Drive belum dihubungkan. Buka Pengaturan untuk menghubungkan akun Drive Anda.' }, { status: 400 });
+    }
+
+    let drive;
+    try {
+      drive = await getDriveClientForUser(userId);
+    } catch {
+      return NextResponse.json({ error: 'Google Drive belum dihubungkan. Buka Pengaturan untuk menghubungkan akun Drive Anda.' }, { status: 400 });
     }
 
     const formData = await req.formData();
@@ -79,7 +86,8 @@ export async function POST(req: NextRequest) {
       buffer,
       finalFileName,
       file.type,
-      settings.driveFolderId
+      settings.driveFolderId,
+      drive
     );
 
     return NextResponse.json({ 

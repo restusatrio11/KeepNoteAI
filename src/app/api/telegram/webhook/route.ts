@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { users, masterRencana, laporan } from '@/db/schema';
+import { users, masterRencana, laporan, telegramUpdates } from '@/db/schema';
 import { eq, and, gt } from 'drizzle-orm';
 
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -80,6 +80,31 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const msg = body?.message;
   if (!msg) return NextResponse.json({ ok: true });
+
+  // Deduplikasi: cegah Telegram mengirim ulang update yang sama
+  // (mis. karena webhook lambat) membuat laporan duplikat/spam.
+  const updateId =
+    body.update_id != null
+      ? String(body.update_id)
+      : `${msg.chat.id}:${msg.message_id}`;
+  try {
+    const inserted = await db
+      .insert(telegramUpdates)
+      .values({
+        updateId,
+        chatId: String(msg.chat.id),
+        messageId: String(msg.message_id),
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (inserted.length === 0) {
+      // Update sudah pernah diproses -> abaikan (balas 200 agar tidak dikirim ulang)
+      return NextResponse.json({ ok: true });
+    }
+  } catch (e) {
+    // Kalau tabel belum ada, lanjutkan saja (tidak memblokir)
+    console.error('Telegram dedupe error:', e);
+  }
 
   const chatId = String(msg.chat.id);
   const text = msg.text || '';
@@ -175,7 +200,9 @@ export async function POST(req: NextRequest) {
         '📋 /rk — Lihat daftar Rencana Kerja\n' +
         '🎯 /rk KODE — Pilih target RK\n' +
         '🔍 /status — Cek status koneksi\n' +
-        '🔌 /unlink — Putuskan koneksi\n\n' +
+        '🔌 /unlink — Putuskan koneksi\n' +
+        '⏸ /stop — Jeda pembuatan laporan otomatis\n' +
+        '▶️ /lanjut — Lanjutkan pembuatan laporan\n\n' +
         '📸 Kirim *foto/dokumen* — Analisis + buat laporan\n' +
         '📝 Kirim *teks* — Deskripsikan kegiatan'
       );
@@ -204,6 +231,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    if (cmd === '/stop' || cmd === '/pause') {
+      const u = await getUser(chatId);
+      if (!u) { await sendMsg(chatId, '❌ Akun belum terhubung. Ketik /start'); return NextResponse.json({ ok: true }); }
+      await db.update(users).set({ telegramPaused: true }).where(eq(users.id, u.id as any));
+      await sendMsg(chatId, '⏸ Bot dijeda. Laporan tidak akan dibuat otomatis dari chat. Ketik /lanjut untuk melanjutkan.');
+      return NextResponse.json({ ok: true });
+    }
+
+    if (cmd === '/lanjut' || cmd === '/resume') {
+      const u = await getUser(chatId);
+      if (!u) { await sendMsg(chatId, '❌ Akun belum terhubung. Ketik /start'); return NextResponse.json({ ok: true }); }
+      await db.update(users).set({ telegramPaused: false }).where(eq(users.id, u.id as any));
+      await sendMsg(chatId, '▶️ Bot dilanjutkan. Kirim foto/teks untuk membuat laporan.');
+      return NextResponse.json({ ok: true });
+    }
+
     return NextResponse.json({ ok: true });
   }
 
@@ -229,6 +272,32 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
+function parseTanggal(input: string): Date | null {
+  if (!input) return null;
+  const bulan: Record<string, number> = {
+    januari: 0, februari: 1, maret: 2, april: 3, mei: 4, juni: 5,
+    juli: 6, agustus: 7, september: 8, oktober: 9, november: 10, desember: 11,
+  };
+  const m1 = input.match(/\b(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+(\d{4})\b/i);
+  if (m1) {
+    const d = parseInt(m1[1], 10), mo = bulan[m1[2].toLowerCase()], y = parseInt(m1[3], 10);
+    if (d >= 1 && d <= 31 && mo !== undefined) return new Date(y, mo, d);
+  }
+  const m2 = input.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/);
+  if (m2) {
+    const d = parseInt(m2[1], 10), mo = parseInt(m2[2], 10) - 1, y = parseInt(m2[3], 10);
+    if (d >= 1 && d <= 31 && mo >= 0 && mo <= 11) return new Date(y, mo, d);
+  }
+  return null;
+}
+
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 async function getActiveRencana(user: any) {
   if (user.selectedRencanaId) {
     const [r] = await db.select().from(masterRencana).where(eq(masterRencana.id, user.selectedRencanaId as any)).limit(1);
@@ -238,6 +307,10 @@ async function getActiveRencana(user: any) {
 }
 
 async function handleFile(chatId: string, user: any, fileId: string, caption: string) {
+  if (user.telegramPaused) {
+    await sendMsg(chatId, '⏸ Bot sedang dijeda. Ketik /lanjut untuk membuat laporan dari chat.');
+    return;
+  }
   await sendMsg(chatId, '⏳ Mengunduh file...');
   try {
     const fileRes = await tgFetch('getFile', { file_id: fileId });
@@ -260,12 +333,17 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
 
     let buktiUrls = '';
     try {
-      const { uploadToDrive } = await import('@/lib/drive');
+      const { uploadToDrive, getDriveClientFromTokens } = await import('@/lib/drive');
+      const { decryptSecret } = await import('@/lib/portal/crypto');
       const { userSettings } = await import('@/db/schema');
       const [settings] = await db.select().from(userSettings)
         .where(eq(userSettings.userId, user.id as any)).limit(1);
-      if (settings?.driveFolderId) {
-        const result = await uploadToDrive(buffer, filePath.split('/').pop() || 'file', mime, settings.driveFolderId);
+      if (settings?.driveRefreshToken && settings?.driveFolderId) {
+        const drive = await getDriveClientFromTokens(
+          settings.driveAccessToken ? decryptSecret(settings.driveAccessToken) : undefined,
+          decryptSecret(settings.driveRefreshToken)
+        );
+        const result = await uploadToDrive(buffer, filePath.split('/').pop() || 'file', mime, settings.driveFolderId, drive);
         if (result?.link) buktiUrls = JSON.stringify([result.link]);
       }
     } catch (e) { console.error('Upload error:', e); }
@@ -312,7 +390,8 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const tgl = parseTanggal(caption) || new Date();
+    const today = toISODate(tgl);
     await db.insert(laporan).values({
       userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
       kegiatan, progress: 100, capaian,
@@ -327,6 +406,10 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
 }
 
 async function handleText(chatId: string, user: any, text: string) {
+  if (user.telegramPaused) {
+    await sendMsg(chatId, '⏸ Bot sedang dijeda. Ketik /lanjut untuk membuat laporan dari chat.');
+    return;
+  }
   const activeRk = await getActiveRencana(user);
   const rkContext = activeRk
     ? `\n\nLaporan ini harus masuk ke RK: *${activeRk.kode}* — ${activeRk.nama}.`
@@ -363,7 +446,8 @@ async function handleText(chatId: string, user: any, text: string) {
       return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const tgl = parseTanggal(text) || new Date();
+    const today = toISODate(tgl);
     await db.insert(laporan).values({
       userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
       kegiatan: aiResult.kegiatan, progress: 100, capaian: aiResult.capaian || 'Tercapai sesuai target.',

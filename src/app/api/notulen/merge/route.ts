@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db } from '@/db';
 import { notulen } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { PDFDocument } from 'pdf-lib';
-import { extractFileIdFromUrl, getFileBuffer } from '@/lib/drive';
+import { extractFileIdFromUrl, getFileBuffer, getDriveClientForUser } from '@/lib/drive';
 import { generateNotulenPdf } from '@/lib/pdf-generator';
 
 export async function POST(req: NextRequest) {
@@ -18,28 +18,36 @@ export async function POST(req: NextRequest) {
     // 1. Fetch Notulen Data with retry/safety
     let data;
     try {
-      const results = await db.select().from(notulen).where(eq(notulen.id, notulenId)).limit(1);
+      const results = await db.select().from(notulen).where(and(eq(notulen.id, notulenId), eq(notulen.userId, session.user.id))).limit(1);
       data = results[0];
     } catch (dbError) {
       console.error('Database connection error in merge:', dbError);
       // Optional: Wait and retry once
       await new Promise(r => setTimeout(r, 1000));
-      const results = await db.select().from(notulen).where(eq(notulen.id, notulenId)).limit(1);
+      const results = await db.select().from(notulen).where(and(eq(notulen.id, notulenId), eq(notulen.userId, session.user.id))).limit(1);
       data = results[0];
     }
     
     if (!data) return NextResponse.json({ error: 'Notulen not found' }, { status: 404 });
 
+    // Build Drive client for the owner (guarded — files live in their own Drive)
+    let drive: any = null;
+    try {
+      drive = await getDriveClientForUser(session.user.id);
+    } catch {
+      drive = null;
+    }
+
     // 2. Start PDF Merging
     const mergedPdf = await PDFDocument.create();
 
     // -- Part 1: Undangan --
-    if (data.undanganUrl) {
+    if (data.undanganUrl && drive) {
       console.log('Merging Undangan from:', data.undanganUrl);
       const fileId = extractFileIdFromUrl(data.undanganUrl);
       if (fileId) {
         try {
-          const buffer = await getFileBuffer(fileId);
+          const buffer = await getFileBuffer(fileId, drive);
           const donorPdf = await PDFDocument.load(buffer);
           const pages = await mergedPdf.copyPages(donorPdf, donorPdf.getPageIndices());
           pages.forEach(page => mergedPdf.addPage(page));
@@ -63,12 +71,12 @@ export async function POST(req: NextRequest) {
     }
 
     // -- Part 3: Daftar Hadir --
-    if (data.daftarHadirUrl) {
+    if (data.daftarHadirUrl && drive) {
       console.log('Merging Daftar Hadir from:', data.daftarHadirUrl);
       const fileId = extractFileIdFromUrl(data.daftarHadirUrl);
       if (fileId) {
         try {
-          const buffer = await getFileBuffer(fileId);
+          const buffer = await getFileBuffer(fileId, drive);
           const donorPdf = await PDFDocument.load(buffer);
           const pages = await mergedPdf.copyPages(donorPdf, donorPdf.getPageIndices());
           pages.forEach(page => mergedPdf.addPage(page));

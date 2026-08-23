@@ -5,50 +5,8 @@ import { userSettings, portalCredentials, masterRencana } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { auth } from '@/auth';
 import { revalidatePath } from 'next/cache';
-import { createFolder, shareFile } from '@/lib/drive';
 import { encryptSecret, decryptSecret } from '@/lib/portal/crypto';
 import { portalRequest, buildPortalHeaders } from '@/lib/portal/http';
-
-export async function setupAutoDrive() {
-  const session = await auth();
-  if (!session?.user?.id || !session?.user?.email) {
-    throw new Error('Unauthorized: Pastikan Anda sudah login dengan email valid.');
-  }
-
-  const userId = session.user.id;
-  const userName = session.user.name || 'User';
-  const userEmail = session.user.email;
-
-  try {
-    const folderName = `KeepNoteAI_Files_${userName.replace(/\s+/g, '_')}`;
-    const folderId = await createFolder(folderName);
-    
-    if (folderId) {
-      // Invite user as writer
-      await shareFile(folderId, userEmail);
-
-      const existing = await db.select().from(userSettings).where(eq(userSettings.userId, userId)).limit(1);
-
-      if (existing.length > 0) {
-        await db.update(userSettings)
-          .set({ driveFolderId: folderId, updatedAt: new Date() })
-          .where(eq(userSettings.userId, userId));
-      } else {
-        await db.insert(userSettings).values({
-          userId,
-          driveFolderId: folderId,
-        });
-      }
-
-      revalidatePath('/settings');
-      return { success: true, folderId };
-    }
-    throw new Error('Gagal membuat folder.');
-  } catch (error: any) {
-    console.error('Setup Auto Drive Error:', error);
-    throw new Error(error.message || 'Gagal menyiapkan Drive otomatis.');
-  }
-}
 
 export async function saveSettings(formData: FormData) {
   const session = await auth();
@@ -87,7 +45,12 @@ export async function getSettings() {
   if (!session?.user?.id) return null;
 
   const [settings] = await db.select().from(userSettings).where(eq(userSettings.userId, session.user.id)).limit(1);
-  return settings || null;
+  if (!settings) return null;
+  return {
+    driveFolderId: settings.driveFolderId,
+    driveEmail: settings.driveEmail || null,
+    driveConnected: !!settings.driveRefreshToken,
+  };
 }
 
 export async function savePortalCredentials(formData: FormData) {

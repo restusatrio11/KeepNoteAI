@@ -3,7 +3,7 @@ import { analyzeImageReport } from '@/lib/ai';
 import { auth } from '@/auth';
 import { db } from '@/db';
 import { masterRencana } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { extractTextFromPDF } from '@/lib/pdf-parser';
 const mammoth = require('mammoth');
 
@@ -20,11 +20,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Data and Rencana context are required' }, { status: 400 });
     }
 
-    // Fetch rencana details for context
+    // Fetch rencana details for context (ensure it belongs to the user)
     const [rencana] = await db
       .select()
       .from(masterRencana)
-      .where(eq(masterRencana.id, rencanaId))
+      .where(and(eq(masterRencana.id, rencanaId), eq(masterRencana.userId, session.user.id as string)))
       .limit(1);
 
     if (!rencana) {

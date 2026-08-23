@@ -14,6 +14,18 @@ export async function POST() {
   }
   try {
     await db.execute(sql`ALTER TABLE portal_credentials ADD COLUMN IF NOT EXISTS skpid text;`);
+    await db.execute(sql`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS drive_refresh_token text;`);
+    await db.execute(sql`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS drive_access_token text;`);
+    await db.execute(sql`ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS drive_email text;`);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_paused boolean NOT NULL DEFAULT false;`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS telegram_updates (
+        update_id text PRIMARY KEY,
+        chat_id text,
+        message_id text,
+        created_at timestamp NOT NULL DEFAULT now()
+      );
+    `);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS portal_iki (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

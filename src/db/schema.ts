@@ -8,7 +8,15 @@ export const users = pgTable('users', {
   telegramChatId: text('telegram_chat_id'),
   verificationCode: text('verification_code'),
   verificationExpiry: timestamp('verification_expiry'),
+  telegramPaused: boolean('telegram_paused').default(false).notNull(),
   selectedRencanaId: uuid('selected_rencana_id'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const telegramUpdates = pgTable('telegram_updates', {
+  updateId: text('update_id').primaryKey(),
+  chatId: text('chat_id'),
+  messageId: text('message_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -52,6 +60,9 @@ export const userSettings = pgTable('user_settings', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').references(() => users.id).unique().notNull(),
   driveFolderId: text('drive_folder_id'),
+  driveRefreshToken: text('drive_refresh_token'),
+  driveAccessToken: text('drive_access_token'),
+  driveEmail: text('drive_email'),
   healthScore: integer('health_score'),
   healthStatus: text('health_status'),
   healthMessage: text('health_message'),
