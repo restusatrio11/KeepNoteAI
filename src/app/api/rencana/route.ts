@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { masterRencana } from '@/db/schema';
+import { masterRencana, portalIki } from '@/db/schema';
 import { auth } from '@/auth';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, and, inArray } from 'drizzle-orm';
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -13,7 +13,25 @@ export async function GET(req: NextRequest) {
       where: eq(masterRencana.userId, session.user.id),
       orderBy: [desc(masterRencana.createdAt)],
     });
-    return NextResponse.json(data);
+
+    const rkids = data.map((d) => d.portalRkid).filter((v): v is string => !!v);
+    const ikiMap: Record<string, string[]> = {};
+    if (rkids.length > 0) {
+      const ikis = await db
+        .select()
+        .from(portalIki)
+        .where(and(eq(portalIki.userId, session.user.id), inArray(portalIki.rkid, rkids)));
+      for (const i of ikis) {
+        if (!ikiMap[i.rkid]) ikiMap[i.rkid] = [];
+        if (i.iki) ikiMap[i.rkid].push(i.iki);
+      }
+    }
+
+    const enriched = data.map((d) => ({
+      ...d,
+      ikiList: d.portalRkid && ikiMap[d.portalRkid] ? ikiMap[d.portalRkid] : [],
+    }));
+    return NextResponse.json(enriched);
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to fetch work plans' }, { status: 500 });

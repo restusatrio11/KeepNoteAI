@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon, Copy, Clock, Download } from 'lucide-react';
+import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon, Copy, Clock, Download, RefreshCw, CheckCircle2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReportModal from './ReportModal';
 import { useToast } from '@/providers/ToastProvider';
@@ -28,6 +28,7 @@ export default function LaporanPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isCopyModalOpen, setIsCopyModalOpen] = useState(false);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [selectedReport, setSelectedReport] = useState<any>(null);
 
   const fetchReports = useCallback(async () => {
@@ -152,6 +153,10 @@ export default function LaporanPage() {
           <button onClick={() => setIsAddModalOpen(true)} className="btn btn-primary" style={{ width: 'auto' }}>
             <Plus size={20} />
             <span>Tambah Laporan</span>
+          </button>
+          <button onClick={() => setIsSyncModalOpen(true)} className="btn glass" style={{ width: 'auto' }}>
+            <RefreshCw size={20} />
+            <span>Sync ke e-Kinerja</span>
           </button>
         </div>
       </header>
@@ -355,6 +360,113 @@ export default function LaporanPage() {
           </div>
         </div>
       </Modal>
+
+      <Modal isOpen={isSyncModalOpen} onClose={() => setIsSyncModalOpen(false)} title="Sync ke e-Kinerja / SKP" width="720px">
+        <PortalSyncModal
+          fromDate={fromDate}
+          toDate={toDate}
+          filterRencana={filterRencana}
+          onClose={() => setIsSyncModalOpen(false)}
+        />
+      </Modal>
+    </div>
+  );
+}
+
+type SyncLog = { id: string; label: string; status: 'ok' | 'fail' | 'pending' | 'dup'; message?: string };
+
+function PortalSyncModal({ fromDate, toDate, filterRencana, onClose }: { fromDate: string; toDate: string; filterRencana: string; onClose: () => void }) {
+  const { showToast } = useToast();
+  const [syncing, setSyncing] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [log, setLog] = useState<SyncLog[]>([]);
+
+  async function start() {
+    setSyncing(true);
+    setLog([]);
+    setProgress({ done: 0, total: 0 });
+    try {
+      const params = new URLSearchParams({ from: fromDate, to: toDate, limit: '1000', rencanaId: filterRencana });
+      const res = await fetch(`/api/laporan?${params}`);
+      const json = await res.json();
+      const items: any[] = json.data || [];
+      if (items.length === 0) {
+        showToast('Tidak ada laporan pada rentang terpilih.', 'error');
+        setSyncing(false);
+        return;
+      }
+      setProgress({ done: 0, total: items.length });
+      const logs: SyncLog[] = items.map((it) => ({ id: it.id, label: it.kegiatan || it.id, status: 'pending' }));
+      setLog(logs);
+
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        const r = await fetch('/api/portal/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ laporanId: it.id }),
+        });
+        const data = await r.json();
+        const status: SyncLog['status'] = data.duplicate ? 'dup' : data.success ? 'ok' : 'fail';
+        logs[i] = { id: it.id, label: it.kegiatan || it.id, status, message: data.message || data.error };
+        setLog([...logs]);
+        setProgress({ done: i + 1, total: items.length });
+      }
+      const failed = logs.filter((l) => l.status === 'fail').length;
+      const dup = logs.filter((l) => l.status === 'dup').length;
+      const ok = logs.filter((l) => l.status === 'ok').length;
+      const parts = [`${ok} berhasil`];
+      if (dup) parts.push(`${dup} duplikat (dilewati)`);
+      if (failed) parts.push(`${failed} gagal`);
+      showToast(`Selesai: ${parts.join(', ')}.`, failed ? 'error' : 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Gagal memulai sinkronisasi', 'error');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  return (
+    <div>
+      <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+        Laporan pada rentang terpilih akan dikirim satu per satu ke portal e-Kinerja. Pastikan sesi cookie masih aktif (cek di Pengaturan).
+      </p>
+
+      {progress.total > 0 && (
+        <div style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.4rem' }}>
+            <span>Progres</span>
+            <span>{progress.done}/{progress.total}</span>
+          </div>
+          <div style={{ height: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '10px', overflow: 'hidden' }}>
+            <div style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%`, height: '100%', backgroundColor: 'var(--primary)', transition: 'width 0.3s' }} />
+          </div>
+        </div>
+      )}
+
+      <div style={{ maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1.5rem' }}>
+        {log.length === 0 && <p style={{ fontSize: '0.85rem', opacity: 0.5 }}>Belum ada aktivitas.</p>}
+        {log.map((l) => (
+          <div key={l.id} style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', fontSize: '0.82rem', padding: '0.6rem 0.8rem', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '10px' }}>
+            {l.status === 'pending' && <Loader2 size={16} className="spin" style={{ flexShrink: 0, marginTop: '2px' }} />}
+            {l.status === 'ok' && <CheckCircle2 size={16} color="var(--success)" style={{ flexShrink: 0, marginTop: '2px' }} />}
+            {l.status === 'dup' && <Info size={16} color="var(--accent)" style={{ flexShrink: 0, marginTop: '2px' }} />}
+            {l.status === 'fail' && <AlertCircle size={16} color="var(--error)" style={{ flexShrink: 0, marginTop: '2px' }} />}
+            <div>
+              <p style={{ fontWeight: 600 }}>{l.label}</p>
+              {l.message && <p style={{ fontSize: '0.75rem', opacity: 0.6 }}>{l.message}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+        <button onClick={onClose} className="btn glass">Tutup</button>
+        <button onClick={start} disabled={syncing} className="btn btn-primary">
+          {syncing ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+          <span>{syncing ? 'Menyinkronkan...' : 'Mulai Sync'}</span>
+        </button>
+      </div>
     </div>
   );
 }

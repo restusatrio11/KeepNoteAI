@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Briefcase, Trash2, Edit2, Loader2, AlertCircle, Check, Calendar, StickyNote, Settings2, UsersRound, Search } from 'lucide-react';
+import { Plus, Briefcase, Trash2, Edit2, Loader2, AlertCircle, Check, Calendar, StickyNote, Settings2, UsersRound, Search, RefreshCw } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import Modal from '@/components/Modal';
 import PlanningBoard from '@/components/PlanningBoard';
@@ -20,6 +20,7 @@ export default function RencanaPage() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [deletingItem, setDeletingItem] = useState<any>(null);
   const [isMounted, setIsMounted] = useState(false);
+  const [syncingPortal, setSyncingPortal] = useState(false);
 
   const [formData, setFormData] = useState({
     nama: '',
@@ -176,6 +177,25 @@ export default function RencanaPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleSyncPortal = async () => {
+    setSyncingPortal(true);
+    try {
+      const res = await fetch('/api/portal/rencana-sync', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast(data.message || 'Sinkron berhasil', 'success');
+        fetchRencana();
+        fetchTim();
+      } else {
+        showToast(data.message || data.error || 'Gagal sinkron', 'error');
+      }
+    } catch (e: any) {
+      showToast(e?.message || 'Gagal menghubungi server', 'error');
+    } finally {
+      setSyncingPortal(false);
+    }
+  };
+
   const cancelEdit = () => {
     setEditingItem(null);
         setFormData({ nama: '', kode: '', timId: '', iki: '' });
@@ -194,9 +214,21 @@ export default function RencanaPage() {
 
   return (
     <div className="animate-in">
-      <header style={{ marginBottom: '2.5rem' }}>
-        <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Manajemen Rencana</h1>
-        <p className="text-muted">Kelola catatan harian (Sticky Notes) dan master data program kerja Anda.</p>
+      <header style={{ marginBottom: '2.5rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Manajemen Rencana</h1>
+          <p className="text-muted">Kelola catatan harian (Sticky Notes) dan master data program kerja Anda.</p>
+        </div>
+        <button
+          onClick={handleSyncPortal}
+          disabled={syncingPortal}
+          className="btn glass"
+          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1rem' }}
+          title="Ambil Tim, Program Kerja, dan IKI dari portal e-Kinerja"
+        >
+          {syncingPortal ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+          <span>{syncingPortal ? 'Menyinkron...' : 'Sync dari Portal'}</span>
+        </button>
       </header>
 
       {/* Tab Switcher */}
@@ -387,6 +419,16 @@ export default function RencanaPage() {
                             </div>
                             {item.iki && (
                               <p style={{ fontSize: '0.75rem', color: '#8b5cf6', marginTop: '0.2rem' }}>IKI: {item.iki}</p>
+                            )}
+                            {item.ikiList && item.ikiList.length > 0 && (
+                              <div style={{ marginTop: '0.3rem' }}>
+                                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.15rem' }}>IKI Portal:</p>
+                                <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+                                  {item.ikiList.map((k: string, i: number) => (
+                                    <li key={i} style={{ fontSize: '0.72rem', color: '#8b5cf6' }}>{k}</li>
+                                  ))}
+                                </ul>
+                              </div>
                             )}
                             {isMounted && (
                             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>

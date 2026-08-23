@@ -27,6 +27,8 @@ export const masterRencana = pgTable('master_rencana', {
   nama: text('nama').notNull(),
   kode: text('kode').notNull(),
   iki: text('iki'),
+  portalRkid: text('portal_rkid'),
+  portalSkpid: text('portal_skpid'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -65,6 +67,28 @@ export const dailyPlanning = pgTable('daily_planning', {
   color: text('color').notNull(), // e.g., 'yellow', 'blue', 'pink'
   reminderTime: timestamp('reminder_time'),
   isDone: boolean('is_done').default(false).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const portalCredentials = pgTable('portal_credentials', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id).notNull().unique(),
+  portalUrl: text('portal_url'),
+  cookieEnc: text('cookie_enc').notNull(),
+  xAuthEnc: text('x_auth_enc'),
+  skpid: text('skpid'),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const portalIki = pgTable('portal_iki', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id).notNull(),
+  rkid: text('rkid').notNull(),
+  rencanakinerja: text('rencanakinerja'),
+  pkiId: text('pki_id'),
+  iki: text('iki'),
+  kode: text('kode'),
+  raw: text('raw'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
