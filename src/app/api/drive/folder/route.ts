@@ -32,7 +32,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { folderId, folderName } = await req.json();
+    const { folderId, folderName, useDefault } = await req.json();
+
+    if (useDefault) {
+      await db.update(userSettings)
+        .set({ driveFolderId: null, updatedAt: new Date() })
+        .where(eq(userSettings.userId, session.user.id));
+      return NextResponse.json({ success: true, folderId: '' });
+    }
+
     const drive = await getDriveClientForUser(session.user.id);
 
     let finalId: string | null = folderId || null;

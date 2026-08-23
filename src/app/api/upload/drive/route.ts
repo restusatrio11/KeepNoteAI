@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { db } from '@/db';
-import { userSettings, masterRencana } from '@/db/schema';
+import { userSettings, masterRencana, users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { uploadToDrive, getDriveClientForUser, getDriveClientFromServiceAccount } from '@/lib/drive';
+import { uploadToDrive, getDriveClientForUser, getDriveClientFromServiceAccount, buildEvidenceFileName } from '@/lib/drive';
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,12 +14,11 @@ export async function POST(req: NextRequest) {
 
     const userId = session.user.id;
 
-    // Get user's drive folder ID
+    // Get user's drive settings & name
     const [settings] = await db.select().from(userSettings).where(eq(userSettings.userId, userId)).limit(1);
+    const [userRow] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    const userName = userRow?.name || 'user';
 
-    if (!settings?.driveFolderId) {
-      return NextResponse.json({ error: 'Folder tujuan Drive belum diatur. Atur di Pengaturan.' }, { status: 400 });
-    }
     if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON && !settings?.driveRefreshToken) {
       return NextResponse.json({ error: 'Google Drive belum dihubungkan. Buka Pengaturan untuk menghubungkan akun Drive Anda.' }, { status: 400 });
     }
@@ -51,41 +50,14 @@ export async function POST(req: NextRequest) {
       if (rencana) prefix = rencana.kode.toUpperCase();
     }
 
-    // 2. Format Date DDMMYYYY
+    // 2. Format Tanggal YYYY-MM-DD
     const now = new Date();
-    const dateStr = now.toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '');
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-    // 3. Generate AI Summary (3 words)
-    let aiSummary = 'kegiatan';
-    if (deskripsi) {
-      try {
-        const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: process.env.AI_MODEL || 'qwen/qwen-plus',
-            messages: [
-              { role: 'system', content: 'Berikan ringkasan tepat 3 kata dari teks berikut untuk nama file. Gabungkan dengan tanda hubung. Hanya berikan 3 kata saja, tanpa penjelasan.' },
-              { role: 'content', content: deskripsi }
-            ]
-          })
-        });
-        const aiData = await aiRes.json();
-        const summary = aiData.choices?.[0]?.message?.content?.trim();
-        if (summary) {
-          aiSummary = summary.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
-        }
-      } catch (e) {
-        console.error('AI Naming Error:', e);
-      }
-    }
-
-    // 4. Final Filename
+    // 3. Nama file: nama_tgl_kode_kegiatan
     const extension = file.name.split('.').pop();
-    const finalFileName = `${prefix}_${dateStr}_${aiSummary}.${extension}`;
+    const finalBase = buildEvidenceFileName(userName, dateStr, prefix, deskripsi || 'kegiatan');
+    const finalFileName = `${finalBase}.${extension}`;
 
     const buffer = Buffer.from(await file.arrayBuffer());
     
@@ -93,7 +65,7 @@ export async function POST(req: NextRequest) {
       buffer,
       finalFileName,
       file.type,
-      settings.driveFolderId,
+      settings.driveFolderId || '',
       drive
     );
 

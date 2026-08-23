@@ -137,6 +137,62 @@ export async function parseRawReport(text: string) {
 }
 
 /**
+ * Parse a pasted curl / raw request (from DevTools "Copy as cURL") and extract
+ * the e-Kinerja/SKP portal credentials needed to fill the integration form.
+ */
+const PortalCurlSchema = z.object({
+  portalUrl: z.string(),
+  cookie: z.string(),
+  xAuth: z.string(),
+  skpid: z.string().optional().default(''),
+});
+
+export async function parsePortalCurl(text: string) {
+  const systemPrompt = `You are an expert at parsing HTTP requests (curl commands, browser DevTools "Copy as cURL", or raw request text) captured from a web portal such as e-Kinerja/SKP BPS.
+Extract these fields and return ONLY a JSON object:
+{
+  "portalUrl": "base URL of the portal including scheme and host, e.g. https://kipapp.bps.go.id (do NOT include path or query string)",
+  "cookie": "the full verbatim value of the Cookie request header",
+  "xAuth": "the value of the X-Auth header (include the 'Bearer ' prefix if present, otherwise add it)",
+  "skpid": "the numeric SKP ID if visible in the URL query (?skpid=...) or request body, otherwise empty string"
+}
+If a field is not present, use an empty string. Preserve the Cookie and X-Auth values exactly.`;
+
+  return callOpenRouter(text, PortalCurlSchema, systemPrompt, 1);
+}
+
+/**
+ * Map local "Rencana Kinerja" (our database) to portal "Rencana Kinerja" items
+ * using semantic similarity. Returns one entry per local item with the best
+ * matching portal rkid, or null if no reasonable match.
+ */
+const RencanaMapSchema = z.array(z.object({
+  id: z.string(),
+  rkid: z.string().nullable(),
+}));
+
+export async function mapRencanaToPortal(
+  rencana: { id: string; nama: string; kode: string }[],
+  portal: { rkid: string; rencanakinerja: string }[]
+) {
+  const systemPrompt = `You are an expert at matching work-plan items between two systems.
+We have a list of local "Rencana Kinerja" items (our database) and a list of "Rencana Kinerja" items from the e-Kinerja/SKP portal.
+Match each local item to the most semantically similar portal item by meaning of the activity name (ignore codes).
+Return a JSON array where every local item id appears exactly once, with the best matching portal "rkid", or null if no reasonable match exists (similarity below ~70%).
+Respond ONLY with a JSON array.`;
+
+  const userPrompt = `LOCAL_RENCANA (our database, key "id" is the identifier):
+${JSON.stringify(rencana, null, 2)}
+
+PORTAL_RENCANA (e-Kinerja/SKP portal, key "rkid" is the identifier):
+${JSON.stringify(portal, null, 2)}
+
+Return JSON array: [{ "id": "<local id>", "rkid": "<portal rkid or null>" }] (one entry per local item).`;
+
+  return callOpenRouter(userPrompt, RencanaMapSchema, systemPrompt, 1);
+}
+
+/**
  * Analyze image or document for activity report (OCR + Description)
  */
 export async function analyzeImageReport(base64Image: string, contentType: string, rencanaContext?: string) {

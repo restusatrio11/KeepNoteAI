@@ -5,6 +5,12 @@ import { eq, and, gt } from 'drizzle-orm';
 
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
+const URL_REGEX = /(https?:\/\/[^\s]+)/gi;
+
+function extractUrls(text: string): string[] {
+  return (text.match(URL_REGEX) || []).map((u) => u.replace(/[)\]]+$/, ''));
+}
+
 function sendMsg(chatId: string | number, text: string, extra?: any) {
   return fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
     method: 'POST',
@@ -329,38 +335,9 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       : ext === 'pdf' ? 'application/pdf'
       : 'application/octet-stream';
 
-    await sendMsg(chatId, '📤 Mengunggah ke Google Drive...');
-
-    let buktiUrls = '';
-    try {
-      const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientForUser } = await import('@/lib/drive');
-      const { userSettings } = await import('@/db/schema');
-      const [settings] = await db.select().from(userSettings)
-        .where(eq(userSettings.userId, user.id as any)).limit(1);
-      if (settings?.driveFolderId) {
-        let drive;
-        if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-          drive = getDriveClientFromServiceAccount();
-        } else {
-          drive = await getDriveClientForUser(user.id);
-        }
-        const result = await uploadToDrive(buffer, filePath.split('/').pop() || 'file', mime, settings.driveFolderId, drive);
-        if (result?.link) buktiUrls = JSON.stringify([result.link]);
-        if (result?.fallback) {
-          await sendMsg(chatId, '⚠️ Folder tujuan Drive tidak bisa ditulis, file disimpan di folder KeepNoteAI Anda.');
-        }
-      } else {
-        await sendMsg(chatId, '⚠️ Folder tujuan Drive belum diatur di Pengaturan.');
-      }
-    } catch (e: any) {
-      console.error('Upload error:', e);
-      const msg = String(e?.response?.data?.error?.message || e?.message || e);
-      await sendMsg(chatId, `⚠️ Gagal unggah ke Drive: ${msg}`);
-    }
-
+    // 1. Tentukan kegiatan & capaian
     let kegiatan = caption?.trim();
     let capaian = 'Tercapai sesuai target.';
-
     if (kegiatan) {
       await sendMsg(chatId, '🧠 AI merapikan deskripsi...');
       const aiResult = await callAI([
@@ -383,6 +360,7 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       }
     }
 
+    // 2. Tentukan Rencana Kerja
     const activeRk = await getActiveRencana(user);
     let rencana = activeRk;
     if (!rencana) {
@@ -394,18 +372,59 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       ]);
       rencana = findBestRencana(rencanaList, aiHint.rencanaHint || kegiatan);
     }
-
     if (!rencana) {
       await sendMsg(chatId, `📋 *Kegiatan:* ${kegiatan}\n\n⚠️ Tidak ada RK yang cocok. Ketik /rk untuk memilih target RK.`);
       return;
     }
 
+    // 3. Upload ke Drive (folder opsional -> otomatis KeepNoteAI)
     const tgl = parseTanggal(caption) || new Date();
     const today = toISODate(tgl);
+    let buktiUrls: string | null = null;
+    await sendMsg(chatId, '📤 Mengunggah ke Google Drive...');
+    try {
+      const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientForUser, buildEvidenceFileName } = await import('@/lib/drive');
+      const { userSettings } = await import('@/db/schema');
+      const [settings] = await db.select().from(userSettings)
+        .where(eq(userSettings.userId, user.id as any)).limit(1);
+      if (!settings?.driveRefreshToken && !process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        await sendMsg(chatId, '⚠️ Google Drive belum dihubungkan. Hubungkan di Pengaturan agar bukti tersimpan.');
+      } else {
+        let drive;
+        try {
+          drive = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+            ? getDriveClientFromServiceAccount()
+            : await getDriveClientForUser(user.id);
+        } catch {
+          drive = null;
+          await sendMsg(chatId, '⚠️ Gagal menghubungkan ke Google Drive.');
+        }
+        if (drive) {
+          const base = buildEvidenceFileName(user.name, today, rencana.kode, kegiatan);
+          const fileName = `${base}.${ext || 'jpg'}`;
+          const result = await uploadToDrive(buffer, fileName, mime, settings?.driveFolderId || '', drive);
+          if (result?.link) buktiUrls = JSON.stringify([result.link]);
+          const captionUrls = caption ? extractUrls(caption) : [];
+          if (captionUrls.length) {
+            const existing = buktiUrls ? JSON.parse(buktiUrls) : [];
+            buktiUrls = JSON.stringify([...existing, ...captionUrls]);
+          }
+          if (result?.fallback) {
+            await sendMsg(chatId, '⚠️ Folder tujuan Drive tidak bisa ditulis, file disimpan di folder KeepNoteAI Anda.');
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error('Upload error:', e);
+      const msg = String(e?.response?.data?.error?.message || e?.message || e);
+      await sendMsg(chatId, `⚠️ Gagal unggah ke Drive: ${msg}`);
+    }
+
+    // 4. Simpan laporan
     await db.insert(laporan).values({
       userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
       kegiatan, progress: 100, capaian,
-      buktiUrls: buktiUrls || null,
+      buktiUrls,
     });
 
     await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${kegiatan}\n*Capaian:* ${capaian}\n*Progres:* 100%\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
@@ -425,6 +444,10 @@ async function handleText(chatId: string, user: any, text: string) {
     ? `\n\nLaporan ini harus masuk ke RK: *${activeRk.kode}* — ${activeRk.nama}.`
     : '';
 
+  const urls = extractUrls(text);
+  const buktiUrls = urls.length ? JSON.stringify(urls) : null;
+  const textForAI = text.replace(URL_REGEX, '').replace(/\s{2,}/g, ' ').trim() || 'Menyertakan bukti pendukung kegiatan.';
+
   await sendMsg(chatId, '⏳ Memproses deskripsi kegiatan...');
   try {
     const aiResult = await callAI([
@@ -432,7 +455,7 @@ async function handleText(chatId: string, user: any, text: string) {
         role: 'system',
         content: `Convert casual work descriptions into professional Indonesian. Return JSON: { "kegiatan": "professional activity description", "capaian": "achievement description" }${rkContext}`,
       },
-      { role: 'user', content: text },
+      { role: 'user', content: textForAI },
     ]);
 
     if (!aiResult.kegiatan) {
@@ -446,7 +469,7 @@ async function handleText(chatId: string, user: any, text: string) {
       const rkCodes = rencanaList.map((r: any) => `${r.kode}: ${r.nama}`).join('\n');
       const aiHint = await callAI([
         { role: 'system', content: `Match the activity to one of these RK. Return JSON: { "rencanaHint": "the RK code" }\nAvailable RK:\n${rkCodes}` },
-        { role: 'user', content: text },
+        { role: 'user', content: textForAI },
       ]);
       rencana = findBestRencana(rencanaList, aiHint.rencanaHint || aiResult.kegiatan);
     }
@@ -461,9 +484,11 @@ async function handleText(chatId: string, user: any, text: string) {
     await db.insert(laporan).values({
       userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
       kegiatan: aiResult.kegiatan, progress: 100, capaian: aiResult.capaian || 'Tercapai sesuai target.',
+      buktiUrls,
     });
 
-    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || 'Tercapai'}\n*Progres:* 100%\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
+    const buktiNote = buktiUrls ? `\n*Bukti:* ${urls.length} tautan${urls.length > 1 ? '' : ''}` : '';
+    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || 'Tercapai'}\n*Progres:* 100%${buktiNote}\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
   } catch (e) {
     console.error('Text handler error:', e);
     await sendMsg(chatId, '❌ Terjadi kesalahan. Coba lagi nanti.');

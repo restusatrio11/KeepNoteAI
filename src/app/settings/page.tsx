@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useToast } from '@/providers/ToastProvider';
-import { Save, Folder, Loader2, Info, CheckCircle2, Smartphone, Link2, Link2Off, HelpCircle } from 'lucide-react';
+import { Save, Folder, Loader2, Info, CheckCircle2, Smartphone, Link2, Link2Off, HelpCircle, Sparkles } from 'lucide-react';
 import Modal from '@/components/Modal';
 import { getSettings, savePortalCredentials, getPortalCredentials, saveRencanaPortalMapping, getPortalRencanaList } from './actions';
 
@@ -13,28 +13,6 @@ export default function SettingsPage() {
   const [fetching, setFetching] = useState(true);
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState<null | 'drive' | 'telegram' | 'portal'>(null);
-  const [driveFolderId, setDriveFolderId] = useState<string | null>(null);
-  const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
-  const [selectedFolder, setSelectedFolder] = useState('');
-  const [newFolder, setNewFolder] = useState('');
-  const [savingFolder, setSavingFolder] = useState(false);
-
-  async function loadFolders(currentId?: string) {
-    try {
-      const res = await fetch('/api/drive/folder');
-      if (res.ok) {
-        const data = await res.json();
-        const fl = data.folders || [];
-        setFolders(fl);
-        const cur = currentId || driveFolderId;
-        setSelectedFolder(cur && fl.find((f) => f.id === cur) ? cur : (fl[0]?.id || ''));
-      } else {
-        showToast('Gagal memuat folder Drive. Putuskan lalu Hubungkan ulang Google Drive (izin berubah).', 'error');
-      }
-    } catch {
-      showToast('Gagal memuat folder Drive. Periksa koneksi Drive Anda.', 'error');
-    }
-  }
 
   useEffect(() => {
     async function load() {
@@ -42,40 +20,21 @@ export default function SettingsPage() {
       if (settings) {
         setDriveConnected(settings.driveConnected);
         setDriveEmail(settings.driveEmail || null);
-        setDriveFolderId(settings.driveFolderId || null);
-        if (settings.driveConnected) loadFolders(settings.driveFolderId || undefined);
+        // Pastikan selalu pakai folder default KeepNoteAI (bersihkan pilihan folder lama)
+        if (settings.driveConnected && settings.driveFolderId) {
+          try {
+            await fetch('/api/drive/folder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ useDefault: true }),
+            });
+          } catch {}
+        }
       }
       setFetching(false);
     }
     load();
   }, []);
-
-  async function handleSaveFolder() {
-    setSavingFolder(true);
-    try {
-      const body = selectedFolder
-        ? { folderId: selectedFolder }
-        : { folderName: newFolder.trim() };
-      const res = await fetch('/api/drive/folder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setDriveFolderId(data.folderId);
-        setNewFolder('');
-        showToast('Folder tujuan Drive diperbarui.', 'success');
-        loadFolders(data.folderId);
-      } else {
-        showToast(data.error || 'Gagal menyimpan folder.', 'error');
-      }
-    } catch {
-      showToast('Gagal menyimpan folder.', 'error');
-    } finally {
-      setSavingFolder(false);
-    }
-  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -137,39 +96,9 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ marginTop: '0.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border)' }}>
-              <label style={{ fontSize: '0.9rem', fontWeight: 500, display: 'block', marginBottom: '0.5rem' }}>
-                Folder Tujuan di Drive Anda
-              </label>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                <FolderSelect
-                  folders={folders}
-                  value={selectedFolder}
-                  onSelect={setSelectedFolder}
-                  placeholder="Cari folder di Drive Anda..."
-                />
-                <button onClick={handleSaveFolder} disabled={savingFolder} className="btn btn-primary" style={{ padding: '0.7rem 1.25rem' }}>
-                  {savingFolder ? <Loader2 size={16} className="spin" /> : <Folder size={16} />}
-                  <span>{savingFolder ? 'Menyimpan...' : 'Pakai Folder Ini'}</span>
-                </button>
-              </div>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.75rem 0 0.4rem' }}>
-                Atau buat folder baru / tempel link folder Drive:
-              </p>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                <input
-                  type="text"
-                  value={newFolder}
-                  onChange={(e) => setNewFolder(e.target.value)}
-                  placeholder="Nama folder, atau tempel https://drive.google.com/drive/folders/..."
-                  className="input-base"
-                  style={{ flex: '1 1 220px', minWidth: 0, padding: '0.7rem 0.8rem', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', color: 'white' }}
-                />
-                <button onClick={handleSaveFolder} disabled={savingFolder || !newFolder.trim()} className="btn glass">
-                  <span>Buat &amp; Pakai</span>
-                </button>
-              </div>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.6rem' }}>
-                Bukti laporan akan disimpan ke folder yang Anda pilih di Drive pribadi Anda.
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Folder size={15} color="var(--primary)" />
+                Bukti laporan otomatis tersimpan di folder <strong>KeepNoteAI</strong> di Drive Anda.
               </p>
             </div>
 
@@ -216,7 +145,7 @@ export default function SettingsPage() {
           <li>Klik tombol <b>Hubungkan Google Drive</b> di bawah ini.</li>
           <li>Anda diarahkan ke login Google — pilih akun Drive Anda, lalu klik <b>Izinkan</b>.</li>
           <li>Kembali ke halaman ini, status akan berubah menjadi <b>“Terhubung sebagai &lt;email Anda&gt;”</b>.</li>
-          <li>Setelah terhubung, pilih <b>Folder Tujuan</b> di Drive Anda (atau buat folder baru, mis. <b>KeepNoteAI</b>). Bukti laporan akan disimpan ke folder tersebut.</li>
+           <li>Setelah terhubung, semua bukti laporan otomatis tersimpan di folder <b>KeepNoteAI</b> di Drive Anda — tidak perlu memilih folder lagi.</li>
         </ol>
         <p style={noteBox}>Ingin berhenti? Klik <b>Putuskan Google Drive</b>. File yang sudah tersimpan tetap ada di Drive Anda.</p>
       </Modal>
@@ -321,6 +250,8 @@ function PortalSection() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [curlText, setCurlText] = useState('');
+  const [parsing, setParsing] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -373,6 +304,32 @@ function PortalSection() {
     } finally { setTesting(false); }
   }
 
+  async function handleParseCurl() {
+    if (!curlText.trim()) return;
+    setParsing(true);
+    try {
+      const res = await fetch('/api/portal/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: curlText }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.portalUrl) setPortalUrl(data.portalUrl);
+        if (data.cookie) setCookie(data.cookie);
+        if (data.xAuth) setXAuth(data.xAuth);
+        if (data.skpid) setPortalSkpid(data.skpid);
+        showToast('Field portal terisi otomatis. Silakan review lalu Simpan.', 'success');
+      } else {
+        showToast(data.error || 'Gagal mem-parse curl', 'error');
+      }
+    } catch {
+      showToast('Gagal mem-parse curl dengan AI.', 'error');
+    } finally {
+      setParsing(false);
+    }
+  }
+
   if (loading) return <div style={{ textAlign: 'center', padding: '1rem' }}><Loader2 className="spin" /></div>;
 
   return (
@@ -380,6 +337,27 @@ function PortalSection() {
       <p style={{ fontSize: '0.9rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>
         Otomasi via API langsung portal e-Kinerja/SKP. Dari DevTools (Network saat buka/isi portal), salin <code>Cookie</code> dan header <code>X-Auth: Bearer ...</code> (JWT, berlaku ~24 jam).
       </p>
+
+      <div style={{ marginBottom: '1.25rem', padding: '1rem', backgroundColor: 'rgba(59,130,246,0.05)', borderRadius: '12px', border: '1px solid rgba(59,130,246,0.15)' }}>
+        <p style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <Sparkles size={15} color="var(--primary)" /> Isi otomatis dengan AI (paste curl)
+        </p>
+        <textarea
+          value={curlText}
+          onChange={(e) => setCurlText(e.target.value)}
+          placeholder="Tempel perintah curl dari DevTools (klik kanan request → Copy → Copy as cURL)..."
+          rows={4}
+          className="input-base"
+          style={{ width: '100%', padding: '0.85rem 1rem', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', color: 'white', fontFamily: 'monospace', fontSize: '0.75rem', minWidth: 0 }}
+        />
+        <button type="button" onClick={handleParseCurl} disabled={parsing || !curlText.trim()} className="btn btn-primary" style={{ marginTop: '0.6rem', padding: '0.6rem 1.1rem' }}>
+          {parsing ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+          <span>{parsing ? 'Memproses...' : 'Parse dengan AI'}</span>
+        </button>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+          AI akan mengekstrak URL portal, Cookie, X-Auth, dan SKP ID ke field di bawah. Review lalu klik Simpan.
+        </p>
+      </div>
       <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <label style={{ fontSize: '0.9rem', fontWeight: 500 }}>URL Portal</label>
@@ -468,8 +446,11 @@ function RencanaMapping() {
   const { showToast } = useToast();
   const [rencanaList, setRencanaList] = useState<any[]>([]);
   const [portalOptions, setPortalOptions] = useState<{ rkid: string; rencanakinerja: string }[]>([]);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [loadingPortal, setLoadingPortal] = useState(false);
+  const [portalLoaded, setPortalLoaded] = useState(false);
+  const [aiMapping, setAiMapping] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
   async function loadRencana() {
@@ -477,8 +458,10 @@ function RencanaMapping() {
     try {
       const res = await fetch('/api/rencana');
       if (res.ok) {
-        const data = await res.json();
-        setRencanaList(Array.isArray(data) ? data : []);
+        const json = await res.json();
+        const data = Array.isArray(json) ? json : [];
+        setRencanaList(data);
+        setMapping(Object.fromEntries(data.map((d) => [d.id, d.portalRkid || ''])));
       }
     } catch {} finally { setLoading(false); }
   }
@@ -490,6 +473,7 @@ function RencanaMapping() {
     try {
       const opts = await getPortalRencanaList();
       setPortalOptions(opts);
+      setPortalLoaded(true);
       if (opts.length === 0) showToast('Daftar rencana kosong — cek SKP ID & kredensial.', 'error');
       else showToast(`Daftar rencana portal dimuat (${opts.length}).`, 'success');
     } catch (err: any) {
@@ -510,19 +494,60 @@ function RencanaMapping() {
     } finally { setSavingId(null); }
   }
 
+  async function applyMapping(id: string, rkid: string) {
+    setMapping((m) => ({ ...m, [id]: rkid }));
+    const item = rencanaList.find((r) => r.id === id);
+    if (item) await saveRow(item, rkid);
+  }
+
+  async function handleAiMap() {
+    if (!rencanaList.length || !portalOptions.length) return;
+    setAiMapping(true);
+    try {
+      const rencanaPayload = rencanaList.map((r) => ({ id: r.id, nama: r.nama, kode: r.kode || '' }));
+      const res = await fetch('/api/portal/map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rencana: rencanaPayload, portal: portalOptions }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        showToast(data.error || 'Gagal memetakan dengan AI', 'error');
+        return;
+      }
+      const mappings: { id: string; rkid: string | null }[] = data.mappings || [];
+      let matched = 0;
+      for (const m of mappings) {
+        const rkid = m.rkid || '';
+        if (!rkid) continue;
+        await applyMapping(m.id, rkid);
+        matched++;
+      }
+      showToast(`AI memetakan ${matched} rencana ke portal. Silakan review tiap baris.`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Gagal memetakan dengan AI', 'error');
+    } finally { setAiMapping(false); }
+  }
+
   if (loading) return <div style={{ textAlign: 'center', padding: '1rem', marginTop: '1.5rem' }}><Loader2 className="spin" /></div>;
 
   return (
     <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
         <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>Peta Rencana Kinerja → Portal</h3>
-        <button type="button" onClick={loadPortalOptions} disabled={loadingPortal} className="btn glass" style={{ padding: '0.5rem 1rem' }}>
-          {loadingPortal ? <Loader2 className="spin" size={14} /> : <Link2 size={14} />}
-          <span>{loadingPortal ? 'Memuat...' : 'Muat Daftar dari Portal'}</span>
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button type="button" onClick={loadPortalOptions} disabled={loadingPortal} className="btn glass" style={{ padding: '0.5rem 1rem' }}>
+            {loadingPortal ? <Loader2 className="spin" size={14} /> : <Link2 size={14} />}
+            <span>{loadingPortal ? 'Memuat...' : 'Muat Daftar dari Portal'}</span>
+          </button>
+          <button type="button" onClick={handleAiMap} disabled={aiMapping || !portalLoaded || !rencanaList.length} className="btn btn-primary" style={{ padding: '0.5rem 1rem' }}>
+            {aiMapping ? <Loader2 className="spin" size={14} /> : <Sparkles size={14} />}
+            <span>{aiMapping ? 'Memetakan...' : 'AI Mapping'}</span>
+          </button>
+        </div>
       </div>
       <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.5rem 0 1rem' }}>
-        Klik <strong>Muat Daftar dari Portal</strong>, lalu pilih Rencana Kinerja yang cocok untuk setiap rencana di sini. App akan otomatis mengisi <code>rkid</code>; tidak perlu tahu ID-nya.
+        Klik <strong>Muat Daftar dari Portal</strong>, lalu <strong>AI Mapping</strong> untuk mencocokkan otomatis setiap Rencana Kinerja di sini ke rencana portal yang mirip. Anda bisa review/edit tiap baris; App otomatis mengisi <code>rkid</code>.
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         {rencanaList.length === 0 && <p style={{ fontSize: '0.82rem', opacity: 0.5 }}>Belum ada rencana kinerja di sini.</p>}
@@ -531,8 +556,9 @@ function RencanaMapping() {
             key={item.id}
             item={item}
             options={portalOptions}
+            value={mapping[item.id] || ''}
             saving={savingId === item.id}
-            onSave={(rkid) => saveRow(item, rkid)}
+            onSelect={(rkid) => applyMapping(item.id, rkid)}
           />
         ))}
       </div>
@@ -540,10 +566,7 @@ function RencanaMapping() {
   );
 }
 
-function RencanaRow({ item, options, saving, onSave }: { item: any; options: { rkid: string; rencanakinerja: string }[]; saving: boolean; onSave: (rkid: string) => void }) {
-  const [rkid, setRkid] = useState(item.portalRkid || '');
-  const selected = options.find((o) => o.rkid === rkid);
-
+function RencanaRow({ item, options, value, saving, onSelect }: { item: any; options: { rkid: string; rencanakinerja: string }[]; value: string; saving: boolean; onSelect: (rkid: string) => void }) {
   return (
     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', padding: '0.75rem', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '10px' }}>
       <div style={{ flex: '1 1 200px', minWidth: 0 }}>
@@ -552,65 +575,12 @@ function RencanaRow({ item, options, saving, onSave }: { item: any; options: { r
       </div>
       <SearchableSelect
         options={options}
-        value={rkid}
+        value={value}
         disabled={options.length === 0}
         placeholder="— cari & pilih Rencana Kinerja portal —"
-        onSelect={(v) => { setRkid(v); onSave(v); }}
+        onSelect={onSelect}
       />
       {saving && <Loader2 className="spin" size={14} />}
-    </div>
-  );
-}
-
-function FolderSelect({ folders, value, onSelect, placeholder }: {
-  folders: { id: string; name: string }[];
-  value: string;
-  onSelect: (id: string) => void;
-  placeholder?: string;
-}) {
-  const [text, setText] = useState('');
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const s = folders.find((f) => f.id === value);
-    setText(s ? s.name : '');
-  }, [value, folders]);
-
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
-
-  const q = text.trim().toLowerCase();
-  const filtered = q ? folders.filter((f) => f.name.toLowerCase().includes(q)) : folders;
-
-  return (
-    <div ref={ref} style={{ position: 'relative', flex: '1 1 220px', minWidth: 0 }}>
-      <input
-        value={text}
-        placeholder={placeholder}
-        onChange={(e) => { setText(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        className="input-base"
-        style={{ width: '100%', padding: '0.7rem 0.8rem', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', color: 'white' }}
-      />
-      {open && filtered.length > 0 && (
-        <ul style={{ position: 'absolute', zIndex: 50, top: 'calc(100% + 4px)', left: 0, right: 0, maxHeight: 240, overflowY: 'auto', backgroundColor: '#15151c', border: '1px solid var(--border)', borderRadius: 8, margin: 0, padding: 0, listStyle: 'none', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
-          {filtered.map((f) => (
-            <li
-              key={f.id}
-              onMouseDown={() => { setText(f.name); onSelect(f.id); setOpen(false); }}
-              style={{ padding: '0.5rem 0.7rem', fontSize: '0.85rem', cursor: 'pointer', borderBottom: '1px solid var(--border)', color: f.id === value ? 'var(--accent)' : 'white', backgroundColor: f.id === value ? 'rgba(255,255,255,0.06)' : 'transparent' }}
-            >
-              {f.name}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

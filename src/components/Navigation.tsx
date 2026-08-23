@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, FileText, Settings, LogOut, Info, Target, Menu, X, Sparkles } from 'lucide-react';
+import { LayoutDashboard, FileText, Settings, LogOut, Info, Target, Menu, X, Sparkles, CalendarDays } from 'lucide-react';
 import { useSession, signOut } from 'next-auth/react';
 
 export default function Navigation() {
@@ -16,6 +16,7 @@ export default function Navigation() {
     { href: '/laporan', label: 'Laporan', icon: FileText },
     { href: '/notulen', label: 'Notulen', icon: Sparkles },
     { href: '/rencana', label: 'Rencana', icon: Target },
+    { href: '/kalender', label: 'Kalender', icon: CalendarDays },
     { href: '/settings', label: 'Setelan', icon: Settings },
   ];
 

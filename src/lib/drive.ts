@@ -126,6 +126,19 @@ async function findOrCreateOwnFolder(drive: DriveClient): Promise<string> {
   return await createFolder('KeepNoteAI', drive);
 }
 
+export function sanitizeForFileName(s: string, maxLen = 50): string {
+  return s
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLen) || 'file';
+}
+
+export function buildEvidenceFileName(name: string, date: string, kode: string, kegiatan: string): string {
+  return `${sanitizeForFileName(name)}_${date}_${sanitizeForFileName(kode || 'RK')}_${sanitizeForFileName(kegiatan, 50)}`;
+}
+
 export async function uploadToDrive(
   file: Buffer,
   fileName: string,
@@ -133,11 +146,21 @@ export async function uploadToDrive(
   folderId: string,
   drive: DriveClient
 ) {
+  // Jika folder tujuan tidak dipilih, otomatis cari/buat folder KeepNoteAI milik sendiri
+  let targetFolderId = folderId;
+  if (!targetFolderId) {
+    try {
+      targetFolderId = await findOrCreateOwnFolder(drive);
+    } catch {
+      targetFolderId = '';
+    }
+  }
+
   try {
     const response = await drive.files.create({
       requestBody: {
         name: fileName,
-        parents: [folderId],
+        parents: targetFolderId ? [targetFolderId] : undefined,
       },
       media: {
         mimeType,
