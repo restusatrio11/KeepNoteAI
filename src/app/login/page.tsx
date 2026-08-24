@@ -5,6 +5,7 @@ import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { LogIn, Loader2, Mail, Lock, RefreshCw } from 'lucide-react';
+import PixelWalkingBg from '@/components/PixelWalkingBg';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -72,8 +73,9 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 'calc(100vh - 150px)' }}>
-      <div className="card glass" style={{ width: '100%', maxWidth: '400px', padding: '2.5rem' }}>
+    <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 'calc(100vh - 150px)', overflow: 'hidden' }}>
+      <PixelWalkingBg />
+      <div className="card auth-card" style={{ position: 'relative', zIndex: 1, width: '100%', maxWidth: '400px', padding: '2.5rem' }}>
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <div style={{ 
             width: '80px', 

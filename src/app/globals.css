@@ -59,10 +59,19 @@ body {
   transition: all 0.3s ease;
 }
 
-.card.glass:hover {
-  border-color: var(--primary);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 15px rgba(59, 130, 246, 0.1);
-}
+  .card.glass:hover {
+    border-color: var(--primary);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 15px rgba(59, 130, 246, 0.1);
+  }
+
+  .auth-card {
+    background: rgba(10, 14, 28, 0.72);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 20px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  }
 
 /* Responsive Grid Helper */
 .grid-dashboard {
