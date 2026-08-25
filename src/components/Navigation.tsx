@@ -68,7 +68,7 @@ export default function Navigation() {
           })}
           <div style={{ width: '1px', height: '20px', backgroundColor: 'var(--border)', margin: '0 0.5rem' }} />
           <button
-            onClick={() => signOut()}
+            onClick={() => signOut({ callbackUrl: '/login' })}
             style={{ 
               display: 'flex', 
               alignItems: 'center', 
@@ -190,7 +190,10 @@ export default function Navigation() {
           {/* Logout Section */}
           <div style={{ padding: '2rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', backgroundColor: '#060608' }}>
              <button
-              onClick={() => signOut()}
+            onClick={() => signOut({ callbackUrl: '/login' })}
+<arg_key:6124c78e>
+<arg_key:6124c78e>replaceAll</arg_key:6124c78e>
+<arg_value:6124c78e>true
               style={{ 
                 display: 'flex', 
                 alignItems: 'center', 

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <title>KeepNoteAI Desktop — e-Kinerja Sync</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <canvas id="bg"></canvas>
+
+    <header class="topbar">
+      <div class="brand">
+        <img src="logo.png" alt="Logo" class="brand-logo" />
+        <div>
+          <strong>KeepNoteAI</strong>
+          <small>Desktop · Sync e-Kinerja</small>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span id="userInfo" class="user-info"></span>
+        <button id="btnOpenWeb" class="btn ghost">🌐 Buka Web</button>
+        <button id="btnSettings" class="btn ghost">⚙ Pengaturan</button>
+        <button id="btnLogout" class="btn ghost hidden">Keluar</button>
+      </div>
+    </header>
+
+    <!-- LOGIN -->
+    <section id="loginView" class="view login-view">
+      <div class="card auth-card">
+        <div class="auth-head">
+          <div class="logo-box">
+            <img src="logo.png" alt="Logo" />
+          </div>
+          <h1>Selamat Datang</h1>
+          <p>Masuk untuk melanjutkan ke KeepNoteAI</p>
+        </div>
+
+        <p id="loginError" class="error-box hidden"></p>
+
+        <form id="loginForm" class="auth-form">
+          <div class="field-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+            <input id="loginEmail" type="email" placeholder="email@anda.com" required />
+          </div>
+          <div class="field-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+            <input id="loginPassword" type="password" placeholder="••••••••" required />
+          </div>
+          <button id="btnLogin" type="submit" class="btn primary block">Masuk Sekarang</button>
+        </form>
+        <p class="muted small center">Login sama seperti di web. Kredensial e-Kinerja diatur di ⚙ Pengaturan.</p>
+        <p class="muted small center">Belum punya akun? <a id="lnkRegister" href="#" style="color:var(--primary);font-weight:600">Daftar di web</a></p>
+      </div>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section id="dashView" class="view hidden">
+      <div class="toolbar">
+        <div class="field">
+          <label>Dari</label>
+          <input id="filterFrom" type="date" />
+        </div>
+        <div class="field">
+          <label>Sampai</label>
+          <input id="filterTo" type="date" />
+        </div>
+        <div class="field grow">
+          <label>Cari kegiatan</label>
+          <input id="filterSearch" type="text" placeholder="kata kunci..." />
+        </div>
+        <button id="btnLoad" class="btn">Muat</button>
+        <button id="btnTest" class="btn">Test Portal</button>
+        <button id="btnCheckDup" class="btn">🔍 Cek Duplikat</button>
+        <button id="btnSyncAll" class="btn primary">⇪ Sync Semua</button>
+        <button id="btnResetAll" class="btn ghost" title="Hapus semua tanda terkirim agar bisa dikirim ulang">↺ Reset Semua Status</button>
+      </div>
+
+      <div id="progressWrap" class="progress hidden">
+        <div id="progressBar" class="progress-bar"></div>
+        <span id="progressText" class="progress-text"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table id="laporanTable">
+          <thead>
+            <tr>
+              <th style="width:90px">Tanggal</th>
+              <th style="width:170px">Rencana</th>
+              <th>Kegiatan</th>
+              <th style="width:90px">Progress</th>
+              <th style="width:150px">Status</th>
+              <th style="width:140px">Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="laporanBody"></tbody>
+        </table>
+        <p id="emptyHint" class="muted center hidden">Belum ada laporan. Atur filter lalu klik Muat.</p>
+      </div>
+
+      <div class="logpanel">
+        <div class="log-head">
+          <strong>Log</strong>
+          <button id="btnClearLog" class="btn tiny ghost">Bersihkan</button>
+        </div>
+        <div id="log" class="log"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS MODAL -->
+    <div id="settingsModal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>Pengaturan</h3>
+          <button id="btnCloseSettings" class="btn ghost tiny">✕</button>
+        </div>
+
+        <h4>Database</h4>
+        <p id="dbStatus" class="muted small">Status: memeriksa…</p>
+
+        <h4>e-Kinerja / SKP (tempel di sini)</h4>
+        <label>Tempel seluruh kredensial sekaligus, lalu klik <b>Ambil dari Teks</b>:</label>
+        <textarea id="cfgPaste" rows="5" placeholder="https://kipapp.bps.go.id&#10;Cookie: PHPSESSID=...; ...&#10;X-Auth: Bearer eyJ...&#10;SKP ID: 1344761"></textarea>
+        <button id="btnParseCred" class="btn">Ambil dari Teks</button>
+        <p class="muted small">Field di bawah akan terisi otomatis (bisa diedit manual).</p>
+        <label>URL Portal</label>
+        <input id="cfgPortalUrl" type="text" placeholder="https://kipapp.bps.go.id" />
+        <label>Cookie Sesi</label>
+        <input id="cfgCookie" type="text" placeholder="PHPSESSID=...; ..." />
+        <label>X-Auth (Bearer JWT)</label>
+        <input id="cfgXAuth" type="text" placeholder="Bearer eyJ..." />
+        <label>SKP ID</label>
+        <input id="cfgSkpid" type="text" placeholder="1344761" />
+
+        <h4>Pemetaan Rencana → Portal e-Kinerja</h4>
+        <p class="muted small">Agar saat sync, rencana otomatis terpetakan ke portal. Tempel Cookie & X-Auth di atas dulu, lalu muat daftar.</p>
+        <button id="btnLoadRk" class="btn">Muat Daftar dari Portal</button>
+        <span id="rkStatus" class="muted small"></span>
+        <div id="mapList" class="map-list"></div>
+        <button id="btnSaveMap" class="btn primary hidden">Simpan Mapping</button>
+
+        <h4>Automasi</h4>
+        <label>Auto-sync tiap (menit, 0 = mati)</label>
+        <input id="cfgAutoSync" type="number" min="0" step="5" placeholder="0" />
+        <label>Rentang auto-sync (hari ke belakang)</label>
+        <input id="cfgAutoDays" type="number" min="1" step="1" placeholder="7" />
+        <label class="checkbox">
+          <input id="cfgAutoToday" type="checkbox" /> Batasi auto-sync ke laporan hari ini saja
+        </label>
+
+        <div class="modal-actions">
+          <button id="btnSaveSettings" class="btn primary">Simpan</button>
+          <span id="settingsMsg" class="muted small"></span>
+        </div>
+      </div>
+    </div>
+
+    <script src="bg.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

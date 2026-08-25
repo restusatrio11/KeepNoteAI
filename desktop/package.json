@@ -1,0 +1,42 @@
+{
+  "name": "keepnoteai-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KeepNoteAI Desktop - agen sinkronisasi laporan ke e-Kinerja dari IP lokal (bypass blokir Vercel)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-packager . \"KeepNoteAI-Desktop\" --platform=win32 --arch=x64 --icon=icon.ico --out=dist --overwrite"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-packager": "^17.1.2"
+  },
+  "build": {
+    "appId": "com.keepnoteai.desktop",
+    "productName": "KeepNoteAI Desktop",
+    "files": [
+      "main.js",
+      "preload.js",
+      "db.js",
+      "sync.js",
+      "portalHttp.js",
+      "renderer/**/*",
+      "icon.png",
+      "icon.ico"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "icon.ico",
+      "sign": false
+    }
+  }
+}

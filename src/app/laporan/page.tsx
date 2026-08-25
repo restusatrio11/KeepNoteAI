@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, FileText, ImageIcon, Video as VideoIcon, Copy, Clock, Download, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, Info, FileText, ImageIcon, Video as VideoIcon, Copy, Clock, Download, RefreshCw, CheckCircle2 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReportModal from './ReportModal';
 import { useToast } from '@/providers/ToastProvider';
 import SearchableSelect from '@/components/SearchableSelect';
+
+const DESKTOP_APP_URL = process.env.NEXT_PUBLIC_DESKTOP_APP_URL || 'https://drive.google.com/uc?export=download&id=1KUv8R-h0HXMKu9T0Y9AeW90D066AbUuA';
 
 export default function LaporanPage() {
   const { showToast } = useToast();
@@ -431,6 +433,17 @@ function PortalSyncModal({ fromDate, toDate, filterRencana, onClose }: { fromDat
       <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
         Laporan pada rentang terpilih akan dikirim satu per satu ke portal e-Kinerja. Pastikan sesi cookie masih aktif (cek di Pengaturan).
       </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', padding: '0.85rem 1rem', backgroundColor: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '12px', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+        <Download size={20} color="var(--primary)" style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1, minWidth: '200px' }}>
+          Lebih praktis? Unduh <b>Aplikasi Desktop KeepNoteAI</b> untuk auto-sync langsung dari komputer kantor (tanpa harus buka web &amp; copy-paste kredensial tiap hari).
+        </span>
+        <a href={DESKTOP_APP_URL} target="_blank" rel="noopener noreferrer" className="btn btn-primary" style={{ width: 'auto', whiteSpace: 'nowrap' }}>
+          <Download size={16} />
+          <span>Unduh Desktop</span>
+        </a>
+      </div>
 
       {progress.total > 0 && (
         <div style={{ marginBottom: '1rem' }}>

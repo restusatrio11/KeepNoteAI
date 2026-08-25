@@ -44,3 +44,9 @@ GOOGLE_SERVICE_ACCOUNT_JSON=*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# desktop: file exe hasil build (berat ~180MB) — jangan di-commit.
+# Build artifact desktop sudah diabaikan via desktop/.gitignore (dist*/, node_modules, .env).
+*.exe
+public/KeepNoteAI-Desktop.exe
+desktop/.env
