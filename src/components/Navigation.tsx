@@ -191,9 +191,6 @@ export default function Navigation() {
           <div style={{ padding: '2rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', backgroundColor: '#060608' }}>
              <button
             onClick={() => signOut({ callbackUrl: '/login' })}
-<arg_key:6124c78e>
-<arg_key:6124c78e>replaceAll</arg_key:6124c78e>
-<arg_value:6124c78e>true
               style={{ 
                 display: 'flex', 
                 alignItems: 'center', 
