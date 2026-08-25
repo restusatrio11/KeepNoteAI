@@ -7,7 +7,7 @@ import ReportModal from './ReportModal';
 import { useToast } from '@/providers/ToastProvider';
 import SearchableSelect from '@/components/SearchableSelect';
 
-const DESKTOP_APP_URL = process.env.NEXT_PUBLIC_DESKTOP_APP_URL || 'https://drive.google.com/uc?export=download&id=1KUv8R-h0HXMKu9T0Y9AeW90D066AbUuA';
+const DESKTOP_APP_URL = process.env.NEXT_PUBLIC_DESKTOP_APP_URL || 'https://drive.google.com/uc?export=download&id=1w7tbFOo-2e_L9HbPiqUppW8DPv1Pyeeh';
 
 export default function LaporanPage() {
   const { showToast } = useToast();

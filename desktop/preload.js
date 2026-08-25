@@ -11,6 +11,7 @@ const api = {
   sync: (args) => ipcRenderer.invoke('portal:sync', args),
   resetStatus: (id) => ipcRenderer.invoke('sync:reset', { id }),
   resetAllStatus: () => ipcRenderer.invoke('sync:resetAll'),
+  syncMaster: () => ipcRenderer.invoke('master:sync'),
   notify: (args) => ipcRenderer.invoke('notify', args),
   selectFile: () => ipcRenderer.invoke('dialog:selectFile'),
   portalListRk: () => ipcRenderer.invoke('portal:listRk'),

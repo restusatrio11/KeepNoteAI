@@ -274,7 +274,7 @@ async function getBase64Image(imageUrl: string): Promise<string | null> {
 
     // Fallback to fetch for remote images or if on client
     const absoluteUrl = fetchUrl.startsWith('/') 
-      ? `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}${fetchUrl}` 
+      ? `${process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_SITE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') || 'http://localhost:3000'}${fetchUrl}`
       : fetchUrl;
       
     const response = await fetch(absoluteUrl, { signal: AbortSignal.timeout(10000) });

@@ -441,6 +441,22 @@ $('btnSaveSettings').addEventListener('click', saveSettings);
 $('btnParseCred').addEventListener('click', applyParsedCredentials);
 $('cfgPaste').addEventListener('input', applyParsedCredentials);
 
+$('btnSyncMaster').addEventListener('click', async () => {
+  const btn = $('btnSyncMaster');
+  btn.disabled = true;
+  btn.textContent = 'Menyinkronkan…';
+  const res = await window.api.syncMaster();
+  btn.disabled = false;
+  btn.textContent = '⇩ Sync Program & Tim Kerja dari Portal';
+  if (res.ok) {
+    log('Master: ' + res.message, 'ok');
+    $('settingsMsg').textContent = res.message;
+  } else {
+    log('Master gagal: ' + (res.error || ''), 'err');
+    $('settingsMsg').textContent = 'Gagal: ' + (res.error || '');
+  }
+});
+
 $('btnOpenWeb').addEventListener('click', () => window.api.webOpen(''));
 $('lnkRegister').addEventListener('click', (e) => {
   e.preventDefault();

@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { initDb, login, listLaporan, setSyncStatus, clearSyncStatus, clearAllSyncStatus, listRencana, updateRencanaRkid } = require('./db');
 const { syncOneLaporan, testPortal, resolveRkid } = require('./sync');
+const { syncMasterData } = require('./masterSync');
 const { buildPortalHeaders, portalRequest } = require('./portalHttp');
 
 app.setAppUserModelId('com.keepnoteai.desktop');
@@ -379,6 +380,29 @@ app.whenReady().then(() => {
       autoHandled.clear();
       return { ok: true };
     } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('master:sync', async () => {
+    if (!currentUserId) return { ok: false, error: 'Belum login' };
+    const creds = {
+      portalUrl: config.portalUrl,
+      cookie: config.cookie,
+      xAuth: config.xAuth,
+      skpid: config.skpid,
+    };
+    if (!creds.portalUrl || !creds.xAuth) {
+      return { ok: false, error: 'Isi Cookie & X-Auth di Pengaturan dulu' };
+    }
+    try {
+      const res = await syncMasterData(creds, currentUserId);
+      pushLog('Sync master: ' + res.message, 'ok');
+      notify('KeepNoteAI Desktop', res.message);
+      return { ok: true, message: res.message };
+    } catch (e) {
+      pushLog('Sync master gagal: ' + e.message, 'err');
+      notify('KeepNoteAI Desktop', 'Sync master gagal: ' + e.message);
       return { ok: false, error: e.message };
     }
   });

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useToast } from '@/providers/ToastProvider';
-import { Save, Folder, Loader2, Info, CheckCircle2, Smartphone, Link2, Link2Off, HelpCircle, Sparkles } from 'lucide-react';
+import { Save, Folder, Loader2, Info, CheckCircle2, Smartphone, Link2, Link2Off, HelpCircle, Sparkles, Zap } from 'lucide-react';
 import Modal from '@/components/Modal';
 import { getSettings, savePortalCredentials, getPortalCredentials, saveRencanaPortalMapping, getPortalRencanaList } from './actions';
 
@@ -240,6 +240,55 @@ function HintButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+// Parser lokal instan (parity dengan desktop/renderer/app.js) — tanpa AI.
+function parseCredentials(text: string): { portalUrl: string; cookie: string; xAuth: string; skpid: string } {
+  const out = { portalUrl: '', cookie: '', xAuth: '', skpid: '' };
+  const isCurl =
+    /\bcurl\b/i.test(text) ||
+    /\s--url\b/i.test(text) ||
+    /\s-(?:b|--cookie)\b/i.test(text) ||
+    /\s-H\b/i.test(text);
+
+  if (isCurl) {
+    const clean = (s?: string) => (s || '').replace(/\^/g, '').trim();
+    let m =
+      text.match(/--url\s+\^?["']([^"']+)["']/i) ||
+      text.match(/curl\b[^\n]*?\s\^?["'](https?:\/\/[^"'\s]+)["']/i);
+    if (m) {
+      const u = clean(m[1]);
+      try { out.portalUrl = new URL(u).origin; } catch { out.portalUrl = u.split('/').slice(0, 3).join('/'); }
+    }
+    m = text.match(/\s-(?:b|--cookie)\s+\^?["']([^"']+)["']/i);
+    if (m) out.cookie = clean(m[1]);
+    m = text.match(/-H\s+\^?["'][^"']*X-Auth:\s*([^"']+)["']/i);
+    if (m) {
+      out.xAuth = clean(m[1]);
+      if (!/^Bearer\s+/i.test(out.xAuth)) out.xAuth = 'Bearer ' + out.xAuth;
+    }
+    m = text.match(/skpid[\/=](\d+)/i);
+    if (m) out.skpid = m[1];
+    return out;
+  }
+
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const after = (label: string) => {
+    const i = lines.findIndex((l) => l.toLowerCase().includes(label.toLowerCase()));
+    return i >= 0 && i + 1 < lines.length ? lines[i + 1] : '';
+  };
+  out.portalUrl = after('url portal') || lines.find((l) => /^https?:\/\//i.test(l)) || '';
+  out.cookie =
+    after('cookie') ||
+    lines.find((l) => /phpsessid=|laravel_session=|sessionid=|token=/i.test(l)) ||
+    lines.find((l) => l.includes('=') && l.includes(';')) ||
+    '';
+  let xa = after('x-auth') || after('auth');
+  if (!xa) xa = lines.find((l) => /^Bearer\s+/i.test(l)) || lines.find((l) => /^eyJ/i.test(l)) || '';
+  if (xa && !/^Bearer\s+/i.test(xa)) xa = 'Bearer ' + xa;
+  out.xAuth = xa;
+  out.skpid = after('skp') || lines.find((l) => /^\d{4,}$/.test(l)) || '';
+  return out;
+}
+
 function PortalSection() {
   const { showToast } = useToast();
   const [portalUrl, setPortalUrl] = useState('');
@@ -252,6 +301,23 @@ function PortalSection() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [curlText, setCurlText] = useState('');
   const [parsing, setParsing] = useState(false);
+  const [parseInfo, setParseInfo] = useState('');
+
+  // Parse lokal instan — dipanggil setiap teks berubah (auto, tanpa AI).
+  function applyLocalParse(text: string) {
+    if (!text.trim()) { setParseInfo(''); return; }
+    const p = parseCredentials(text);
+    let n = 0;
+    if (p.portalUrl) { setPortalUrl(p.portalUrl); n++; }
+    if (p.cookie) { setCookie(p.cookie); n++; }
+    if (p.xAuth) { setXAuth(p.xAuth); n++; }
+    if (p.skpid) { setPortalSkpid(p.skpid); n++; }
+    setParseInfo(
+      n === 4 ? '✓ Semua field terisi otomatis — tinggal Simpan.'
+      : n > 0 ? `Terdeteksi ${n}/4 field. Sisanya bisa diisi manual atau pakai AI di bawah.`
+      : 'Tidak ada yang terdeteksi dari teks tersebut.',
+    );
+  }
 
   useEffect(() => {
     async function load() {
@@ -340,22 +406,33 @@ function PortalSection() {
 
       <div style={{ marginBottom: '1.25rem', padding: '1rem', backgroundColor: 'rgba(59,130,246,0.05)', borderRadius: '12px', border: '1px solid rgba(59,130,246,0.15)' }}>
         <p style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <Sparkles size={15} color="var(--primary)" /> Isi otomatis dengan AI (paste curl)
+          <Zap size={15} color="var(--primary)" /> Tempel curl — field terisi otomatis (instan)
         </p>
         <textarea
           value={curlText}
-          onChange={(e) => setCurlText(e.target.value)}
+          onChange={(e) => { setCurlText(e.target.value); applyLocalParse(e.target.value); }}
           placeholder="Tempel perintah curl dari DevTools (klik kanan request → Copy → Copy as cURL)..."
           rows={4}
           className="input-base"
           style={{ width: '100%', padding: '0.85rem 1rem', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', color: 'white', fontFamily: 'monospace', fontSize: '0.75rem', minWidth: 0 }}
         />
-        <button type="button" onClick={handleParseCurl} disabled={parsing || !curlText.trim()} className="btn btn-primary" style={{ marginTop: '0.6rem', padding: '0.6rem 1.1rem' }}>
-          {parsing ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
-          <span>{parsing ? 'Memproses...' : 'Parse dengan AI'}</span>
-        </button>
-        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-          AI akan mengekstrak URL portal, Cookie, X-Auth, dan SKP ID ke field di bawah. Review lalu klik Simpan.
+        <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <button type="button" onClick={() => applyLocalParse(curlText)} disabled={!curlText.trim()} className="btn btn-primary" style={{ padding: '0.6rem 1.1rem' }}>
+            <Zap size={15} />
+            <span>Ambil dari Teks</span>
+          </button>
+          <button type="button" onClick={handleParseCurl} disabled={parsing || !curlText.trim()} className="btn glass" style={{ padding: '0.6rem 1.1rem' }}>
+            {parsing ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+            <span>{parsing ? 'Memproses...' : 'Parse dengan AI (cadangan)'}</span>
+          </button>
+        </div>
+        {parseInfo && (
+          <p style={{ fontSize: '0.78rem', marginTop: '0.55rem', color: parseInfo.startsWith('✓') ? 'var(--success)' : 'var(--text-muted)' }}>
+            {parseInfo}
+          </p>
+        )}
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+          URL portal, Cookie, X-Auth, dan SKP ID otomatis terekstrak ke field di bawah saat Anda menempel. Review lalu klik Simpan.
         </p>
       </div>
       <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>

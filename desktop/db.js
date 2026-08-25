@@ -7,6 +7,7 @@
  */
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 let pool = null;
 
@@ -144,11 +145,92 @@ async function listRencana(userId) {
 }
 
 async function updateRencanaRkid(userId, rencanaId, rkid) {
-  if (!pool) throw new Error('Database belum dikonfigurasi');
+  if (!pool) return;
   await pool.query(
     `UPDATE master_rencana SET portal_rkid = $1 WHERE id = $2 AND user_id = $3`,
     [rkid || null, rencanaId, userId],
   );
 }
 
-module.exports = { initDb, login, listLaporan, setSyncStatus, clearSyncStatus, clearAllSyncStatus, listRencana, updateRencanaRkid };
+// --- Sinkron master (Tim Kerja & Program Kerja) dari portal, parity dengan web ---
+async function upsertTimKerja(userId, nama) {
+  if (!pool) return false;
+  const ex = await pool.query('SELECT id FROM tim_kerja WHERE user_id = $1 AND nama = $2 LIMIT 1', [
+    userId,
+    nama,
+  ]);
+  if (ex.rows.length) return false;
+  const id = crypto.randomUUID();
+  await pool.query(
+    'INSERT INTO tim_kerja (id, user_id, nama, keterangan) VALUES ($1, $2, $3, $4)',
+    [id, userId, nama, 'Disinkron dari portal e-Kinerja (Desktop)'],
+  );
+  return true;
+}
+
+async function listTimKerja(userId) {
+  if (!pool) throw new Error('Database belum dikonfigurasi');
+  const { rows } = await pool.query('SELECT id, nama FROM tim_kerja WHERE user_id = $1', [userId]);
+  return rows;
+}
+
+async function upsertRencana(userId, { rkid, nama, timId, skpid }) {
+  if (!pool) return false;
+  const ex = await pool.query(
+    'SELECT id FROM master_rencana WHERE user_id = $1 AND portal_rkid = $2 LIMIT 1',
+    [userId, rkid],
+  );
+  if (ex.rows.length) {
+    await pool.query(
+      'UPDATE master_rencana SET tim_id = $1, portal_rkid = $2, portal_skpid = $3 WHERE id = $4',
+      [timId, rkid, skpid, ex.rows[0].id],
+    );
+    return false;
+  }
+  const id = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO master_rencana (id, user_id, tim_id, nama, kode, portal_rkid, portal_skpid)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, userId, timId, nama, rkid, rkid, skpid],
+  );
+  return true;
+}
+
+async function upsertIki(userId, { rkid, nama, pkiId, iki, kode, raw }) {
+  if (!pool) return false;
+  let dup;
+  if (pkiId) {
+    dup = await pool.query(
+      'SELECT id FROM portal_iki WHERE user_id = $1 AND rkid = $2 AND pki_id = $3 LIMIT 1',
+      [userId, rkid, pkiId],
+    );
+  } else {
+    dup = await pool.query(
+      'SELECT id FROM portal_iki WHERE user_id = $1 AND rkid = $2 AND iki = $3 LIMIT 1',
+      [userId, rkid, iki],
+    );
+  }
+  if (dup.rows.length) return false;
+  const id = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO portal_iki (id, user_id, rkid, rencanakinerja, pki_id, iki, kode, raw)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, userId, rkid, nama, pkiId, iki, kode, raw],
+  );
+  return true;
+}
+
+module.exports = {
+  initDb,
+  login,
+  listLaporan,
+  setSyncStatus,
+  clearSyncStatus,
+  clearAllSyncStatus,
+  listRencana,
+  updateRencanaRkid,
+  upsertTimKerja,
+  listTimKerja,
+  upsertRencana,
+  upsertIki,
+};
