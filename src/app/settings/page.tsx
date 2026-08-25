@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useToast } from '@/providers/ToastProvider';
-import { Save, Folder, Loader2, Info, CheckCircle2, Smartphone, Link2, Link2Off, HelpCircle, Sparkles, Zap } from 'lucide-react';
+import { Save, Folder, Loader2, Info, CheckCircle2, Smartphone, Link2, Link2Off, HelpCircle, Sparkles, Zap, Download, MonitorDown } from 'lucide-react';
 import Modal from '@/components/Modal';
+import { DESKTOP_APP_URL } from '@/lib/desktopApp';
 import { getSettings, savePortalCredentials, getPortalCredentials, saveRencanaPortalMapping, getPortalRencanaList } from './actions';
 
 export default function SettingsPage() {
@@ -400,6 +401,20 @@ function PortalSection() {
 
   return (
     <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', padding: '0.9rem 1.1rem', backgroundColor: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '12px', flexWrap: 'wrap' }}>
+        <MonitorDown size={22} color="var(--primary)" style={{ flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: '220px' }}>
+          <p style={{ fontSize: '0.88rem', fontWeight: 700, marginBottom: '0.2rem' }}>Saran: gunakan Aplikasi Desktop untuk automasi</p>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            Untuk sinkronisasi &amp; automasi Rencana Kerja dan Tim Kerja dari portal KIP App (e-Kinerja), disarankan memakai aplikasi desktop — auto-sync berjalan sendiri dari komputer kantor tanpa perlu membuka web setiap hari.
+          </p>
+        </div>
+        <a href={DESKTOP_APP_URL} target="_blank" rel="noopener noreferrer" className="btn btn-primary" style={{ width: 'auto', whiteSpace: 'nowrap', padding: '0.6rem 1.1rem' }}>
+          <Download size={16} />
+          <span>Unduh Desktop</span>
+        </a>
+      </div>
+
       <p style={{ fontSize: '0.9rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>
         Otomasi via API langsung portal e-Kinerja/SKP. Dari DevTools (Network saat buka/isi portal), salin <code>Cookie</code> dan header <code>X-Auth: Bearer ...</code> (JWT, berlaku ~24 jam).
       </p>
