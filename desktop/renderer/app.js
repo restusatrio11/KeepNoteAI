@@ -417,6 +417,50 @@ async function checkDuplicates() {
   $('btnCheckDup').disabled = false;
 }
 
+// --- Import Excel Kegiatan ---
+async function downloadImportTemplate() {
+  log('Membuat template Excel…', '');
+  const res = await window.api.importTemplate();
+  if (res.canceled) return;
+  if (res.ok) {
+    log(
+      `✓ Template tersimpan: ${res.path}${res.rencanaCount ? ` (${res.rencanaCount} Rencana Kinerja di sheet Referensi RK)` : ' (tanpa referensi RK — sync master dulu di Pengaturan)'}`,
+      'ok',
+    );
+  } else {
+    log('✗ Gagal buat template: ' + (res.error || ''), 'err');
+  }
+}
+
+async function importExcel() {
+  const prev = await window.api.importPreview();
+  if (!prev || prev.canceled) return;
+  if (!prev.ok) {
+    log('✗ Import gagal: ' + (prev.error || ''), 'err');
+    return;
+  }
+  let msg = `${prev.valid} baris valid dari ${prev.total} baris terbaca.`;
+  if (prev.errorCount) {
+    msg += `\n${prev.errorCount} baris dilewati, contoh:\n- ${prev.errors.join('\n- ')}`;
+  }
+  if (!prev.valid) {
+    log('Tidak ada baris valid untuk diimport.\n' + msg, 'warn');
+    return;
+  }
+  if (!confirm(msg + '\n\nLanjutkan import ke database?')) return;
+
+  const res = await window.api.importCommit();
+  if (res.ok) {
+    log(`✓ Import selesai: ${res.inserted} laporan masuk ke database. Klik Muat untuk melihat.`, 'ok');
+    await loadLaporan();
+  } else {
+    log('✗ Import gagal: ' + (res.error || ''), 'err');
+  }
+}
+
+$('btnImportTpl').addEventListener('click', downloadImportTemplate);
+$('btnImport').addEventListener('click', importExcel);
+
 // wiring
 $('loginForm').addEventListener('submit', (e) => {
   e.preventDefault();

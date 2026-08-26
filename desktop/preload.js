@@ -19,6 +19,9 @@ const api = {
   mapRencana: (rencanaId, rkid) => ipcRenderer.invoke('rencana:map', { rencanaId, rkid }),
   webOpen: (p) => ipcRenderer.invoke('web:open', { path: p }),
   checkDup: (args) => ipcRenderer.invoke('portal:checkDup', args),
+  importTemplate: () => ipcRenderer.invoke('import:template'),
+  importPreview: () => ipcRenderer.invoke('import:preview'),
+  importCommit: () => ipcRenderer.invoke('import:commit'),
   onAutoLog: (cb) => ipcRenderer.on('auto:log', (_e, { msg, level }) => cb(msg, level)),
   onAutoProgress: (cb) =>
     ipcRenderer.on('auto:progress', (_e, { done, total, label }) => cb(done, total, label)),

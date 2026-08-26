@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "exceljs": "^4.4.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {
@@ -26,6 +27,7 @@
       "db.js",
       "sync.js",
       "portalHttp.js",
+      "importExcel.js",
       "renderer/**/*",
       "icon.png",
       "icon.ico"

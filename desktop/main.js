@@ -1,7 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, Notification, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { initDb, login, listLaporan, setSyncStatus, clearSyncStatus, clearAllSyncStatus, listRencana, updateRencanaRkid } = require('./db');
+const { initDb, login, listLaporan, setSyncStatus, clearSyncStatus, clearAllSyncStatus, listRencana, updateRencanaRkid, insertLaporan } = require('./db');
+const { buildTemplate, parseWorkbook } = require('./importExcel');
 const { syncOneLaporan, testPortal, resolveRkid } = require('./sync');
 const { syncMasterData } = require('./masterSync');
 const { buildPortalHeaders, portalRequest } = require('./portalHttp');
@@ -411,6 +412,79 @@ app.whenReady().then(() => {
     const res = await dialog.showOpenDialog({ properties: ['openFile'] });
     if (res.canceled) return null;
     return res.filePaths[0];
+  });
+
+  // --- Import Excel Kegiatan ---
+
+  let pendingImport = null;
+
+  ipcMain.handle('import:template', async () => {
+    if (!currentUserId) return { ok: false, error: 'Belum login' };
+    try {
+      const res = await dialog.showSaveDialog(mainWindow, {
+        title: 'Simpan Template Import Kegiatan',
+        defaultPath: 'Template_Import_Kegiatan.xlsx',
+        filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+      });
+      if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+      let rencana = [];
+      try {
+        rencana = await listRencana(currentUserId);
+      } catch {
+        /* template tetap dibuat tanpa referensi */
+      }
+      const buffer = await buildTemplate(rencana);
+      fs.writeFileSync(res.filePath, Buffer.from(buffer));
+      return { ok: true, path: res.filePath, rencanaCount: rencana.length };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('import:preview', async () => {
+    if (!currentUserId) return { ok: false, error: 'Belum login' };
+    try {
+      const res = await dialog.showOpenDialog(mainWindow, {
+        title: 'Pilih File Excel Kegiatan',
+        properties: ['openFile'],
+        filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+      });
+      if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+      const file = res.filePaths[0];
+      let rencana = [];
+      try {
+        rencana = await listRencana(currentUserId);
+      } catch (e) {
+        return { ok: false, error: 'Gagal memuat daftar rencana: ' + e.message };
+      }
+      const parsed = await parseWorkbook(fs.readFileSync(file), rencana);
+      pendingImport = { userId: currentUserId, rows: parsed.rows };
+      return {
+        ok: true,
+        file,
+        total: parsed.total,
+        valid: parsed.rows.length,
+        errors: parsed.errors.slice(0, 20),
+        errorCount: parsed.errors.length,
+      };
+    } catch (e) {
+      pendingImport = null;
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('import:commit', async () => {
+    if (!currentUserId) return { ok: false, error: 'Belum login' };
+    if (!pendingImport || pendingImport.userId !== currentUserId) {
+      return { ok: false, error: 'Tidak ada import yang menunggu. Ulangi pilih file.' };
+    }
+    try {
+      const n = await insertLaporan(currentUserId, pendingImport.rows);
+      pendingImport = null;
+      return { ok: true, inserted: n };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
   });
 
   ipcMain.handle('notify', (_e, { title, body }) => {

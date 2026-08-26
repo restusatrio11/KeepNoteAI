@@ -144,6 +144,47 @@ async function listRencana(userId) {
   return rows;
 }
 
+// Insert hasil import Excel sebagai laporan (sama seperti dibuat dari website).
+async function insertLaporan(userId, items) {
+  if (!pool) throw new Error('Database belum dikonfigurasi');
+  const client = await pool.connect();
+  let inserted = 0;
+  try {
+    await client.query('BEGIN');
+    for (const it of items) {
+      const id = crypto.randomUUID();
+      await client.query(
+        `INSERT INTO laporan
+           (id, user_id, tanggal_mulai, tanggal_selesai, jam_mulai, jam_selesai,
+            rencana_id, kegiatan, progress, capaian, bukti_urls, masukan_skp)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          id,
+          userId,
+          it.tanggalMulai,
+          it.tanggalSelesai || it.tanggalMulai,
+          it.jamMulai,
+          it.jamSelesai,
+          it.rencanaId,
+          it.kegiatan,
+          it.progress ?? 100,
+          it.capaian,
+          it.buktiUrls,
+          it.masukanSkp,
+        ],
+      );
+      inserted++;
+    }
+    await client.query('COMMIT');
+    return inserted;
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 async function updateRencanaRkid(userId, rencanaId, rkid) {
   if (!pool) return;
   await pool.query(
@@ -229,6 +270,7 @@ module.exports = {
   clearAllSyncStatus,
   listRencana,
   updateRencanaRkid,
+  insertLaporan,
   upsertTimKerja,
   listTimKerja,
   upsertRencana,
