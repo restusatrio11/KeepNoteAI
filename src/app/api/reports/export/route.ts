@@ -30,10 +30,11 @@ export async function GET(req: NextRequest) {
     if (to) filters.push(lte(laporan.tanggalMulai, to));
     if (rencanaId && rencanaId !== 'all') filters.push(eq(laporan.rencanaId, rencanaId));
     if (search) {
-      filters.push(or(
+      const searchCondition = or(
         like(laporan.kegiatan, `%${search}%`),
         like(laporan.capaian, `%${search}%`)
-      ));
+      );
+      if (searchCondition) filters.push(searchCondition);
     }
 
     const data = await db

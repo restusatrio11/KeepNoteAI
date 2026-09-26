@@ -31,7 +31,7 @@ Sistem bersifat **multi-user (multi-tenant)**: setiap user hanya bisa melihat da
 | Bahasa | TypeScript |
 | Auth | NextAuth v5 (Credentials: email + password, bcrypt) |
 | Database | PostgreSQL (Neon Serverless) via Drizzle ORM |
-| AI | OpenRouter API (model default `openai/gpt-oss-120b:free`) |
+| AI | OpenRouter API (model default `qwen/qwen3.8-27b:free`) |
 | File/Storage | Google Drive API v3 (OAuth per-user) |
 | Bot | Telegram Bot API (webhook) |
 | Portal | REST API e-Kinerja/SKP (Cookie + X-Auth JWT) |
@@ -73,7 +73,7 @@ Buat file `.env` (atau `.env.local`) di root dengan variabel berikut:
 | `DATABASE_URL` | ✅ | Connection string Neon Postgres (`postgresql://user:pass@host/db`) |
 | `AUTH_SECRET` | ✅ | Secret acak (mis. `openssl rand -base64 32`). Dipakai untuk session NextAuth **dan** enkripsi AES-256-GCM (portal & token Drive) |
 | `OPENROUTER_API_KEY` | ✅ | API key OpenRouter untuk fitur AI |
-| `AI_MODEL` | ⚠️ | Opsional. Default `openai/gpt-oss-120b:free`. (Upload bukti pakai `qwen/qwen-plus`, audio notulen pakai `google/gemini-2.0-flash-lite`) |
+| `AI_MODEL` | ⚠️ | Opsional. Default `qwen/qwen3.8-27b:free`. (Audio notulen pakai `google/gemini-2.5-flash-lite` atau `AI_AUDIO_MODEL`) |
 | `GOOGLE_CLIENT_ID` | ✅* | OAuth client ID Google (untuk Drive per-user) |
 | `GOOGLE_CLIENT_SECRET` | ✅* | OAuth client secret Google |
 | `GOOGLE_REDIRECT_URI` | ✅* | `https://<domain>/api/drive/callback` (di dev: `http://localhost:3000/api/drive/callback`) |
@@ -239,13 +239,23 @@ Bot bekerja **1 Telegram = 1 akun KeepNoteAI** (mapping via `/link`). Semua kiri
 | `/link KODE` | Menautkan chat ke akun (dari kode di Settings) |
 | `/rk` | Lihat daftar Rencana Kinerja milik user |
 | `/rk KODE` | Pilih RK aktif (laporan selanjutnya otomatis ke RK ini) |
-| `/status` | Cek koneksi & RK aktif |
+| `/ai` | Cek status fitur AI merapikan deskripsi laporan |
+| `/ai on` | Aktifkan AI merapikan teks kegiatan & capaian otomatis |
+| `/ai off` | Nonaktifkan AI (catat kegiatan langsung apa adanya sesuai teks asli) |
+| `/status` | Cek koneksi, status AI, & RK aktif |
+| `/stop` / `/pause` | Jeda pembuatan laporan otomatis dari chat |
+| `/lanjut` / `/resume` | Lanjutkan pembuatan laporan otomatis |
 | `/unlink` | Putuskan koneksi Telegram |
 | `/help` | Bantuan perintah |
 
 ### 8.3 Mengirim Laporan
-- **Foto/Dokumen** → bot unduh, upload ke **Drive user**, lalu AI buat `kegiatan` + `capaian` (dari caption atau isi gambar), cocokkan ke RK (pakai `/rk` aktif atau AI match), lalu simpan `laporan` ke akun user.
-- **Teks** → AI rapikan jadi laporan formal, cocokkan RK, simpan.
+- **Mode AI Aktif (Default)**:
+  - **Foto/Dokumen** → bot unduh, upload ke **Drive user**, lalu AI buat `kegiatan` + `capaian` (dari caption atau isi gambar), cocokkan ke RK (pakai `/rk` aktif atau AI match), lalu simpan `laporan` ke akun user.
+  - **Teks** → AI rapikan catatan kasual jadi laporan formal, cocokkan RK, simpan.
+- **Mode Tanpa AI (`/ai off`)**:
+  - **Teks / Caption** langsung dicatat apa adanya ke database tanpa dikirim ke API AI, capaian default 'Tercapai sesuai target.'.
+  - Cocok jika ingin input cepat atau tidak ingin redaksi diubah oleh model AI.
+  - Opsi ini juga bisa di-toggle dari web di menu **Settings → Integrasi Telegram**.
 - Balasan bot berisi ringkasan laporan & link web.
 
 > User yang **belum** `/link` diabaikan (tidak membuat data). Antar user tidak saling melihat karena semua route `laporan` difilter `userId`.

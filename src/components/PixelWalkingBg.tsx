@@ -94,6 +94,7 @@ export default function PixelWalkingBg() {
     }
 
     function resize() {
+      if (!canvas) return;
       W = canvas.clientWidth;
       H = canvas.clientHeight;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);

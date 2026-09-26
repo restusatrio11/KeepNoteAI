@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, id: result.id });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: error.errors[0].message }, { status: 400 });
+      return NextResponse.json({ error: error.issues[0]?.message || 'Validasi gagal' }, { status: 400 });
     }
     console.error(error);
     return NextResponse.json({ error: 'Failed to create report' }, { status: 500 });

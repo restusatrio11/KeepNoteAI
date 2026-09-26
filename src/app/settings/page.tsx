@@ -161,7 +161,7 @@ export default function SettingsPage() {
           <li>Bot membalas <b>“Berhasil terhubung”</b>. Chat Telegram Anda kini terikat akun Anda.</li>
           <li>Kirim <b>foto/dokumen</b> (beri caption) atau <b>teks</b> → bot membuat laporan & menyimpannya ke akun Anda.</li>
         </ol>
-        <p style={noteBox}>Perintah lain: <code style={codeStyle}>/rk</code> (lihat/pilih Rencana Kinerja), <code style={codeStyle}>/status</code>, <code style={codeStyle}>/unlink</code> (putuskan), <code style={codeStyle}>/help</code>.</p>
+        <p style={noteBox}>Perintah lain: <code style={codeStyle}>/rk</code> (lihat/pilih RK), <code style={codeStyle}>/ai on</code> / <code style={codeStyle}>/ai off</code> (aktifkan/nonaktifkan AI merapikan), <code style={codeStyle}>/status</code>, <code style={codeStyle}>/unlink</code>, <code style={codeStyle}>/help</code>.</p>
       </Modal>
 
       <Modal isOpen={help === 'portal'} onClose={() => setHelp(null)} title="Cara: Integrasi e-Kinerja / SKP">
@@ -760,9 +760,10 @@ function SearchableSelect({ options, value, onSelect, placeholder, disabled }: {
 
 function TelegramSection() {
   const { showToast } = useToast();
-  const [data, setData] = useState<{ code: string; isLinked: boolean; chatId: string | null; botUsername: string } | null>(null);
+  const [data, setData] = useState<{ code: string; isLinked: boolean; chatId: string | null; botUsername: string; aiPolish?: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCode, setShowCode] = useState(false);
+  const [togglingAi, setTogglingAi] = useState(false);
 
   async function fetchCode() {
     setLoading(true);
@@ -783,6 +784,29 @@ function TelegramSection() {
     } catch { showToast('Gagal memutuskan koneksi.', 'error'); }
   }
 
+  async function handleToggleAi() {
+    if (!data) return;
+    const nextVal = !(data.aiPolish ?? true);
+    setTogglingAi(true);
+    try {
+      const res = await fetch('/api/telegram/link', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aiPolish: nextVal }),
+      });
+      if (res.ok) {
+        setData(prev => prev ? { ...prev, aiPolish: nextVal } : null);
+        showToast(nextVal ? 'Fitur AI merapikan diaktifkan.' : 'Fitur AI merapikan dinonaktifkan.', 'success');
+      } else {
+        showToast('Gagal mengubah pengaturan AI.', 'error');
+      }
+    } catch {
+      showToast('Terjadi kesalahan jaringan.', 'error');
+    } finally {
+      setTogglingAi(false);
+    }
+  }
+
   useEffect(() => { fetchCode(); }, []);
 
   if (loading) return <div style={{ textAlign: 'center', padding: '1rem' }}><Loader2 className="spin" /></div>;
@@ -798,6 +822,45 @@ function TelegramSection() {
               <p style={{ fontSize: '0.8rem', opacity: 0.6 }}>Telegram Chat ID: {data.chatId}</p>
             </div>
           </div>
+
+          <div style={{
+            padding: '1rem 1.25rem',
+            backgroundColor: 'rgba(255,255,255,0.03)',
+            borderRadius: '12px',
+            border: '1px solid var(--border)',
+            marginBottom: '1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            flexWrap: 'wrap',
+          }}>
+            <div style={{ flex: '1 1 240px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                <Sparkles size={16} color="var(--primary)" />
+                <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Merapikan Deskripsi dengan AI</span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                {(data.aiPolish ?? true)
+                  ? 'Aktif — Bot otomatis merapikan teks/caption menjadi format laporan formal & menentukan capaian.'
+                  : 'Nonaktif — Bot mencatat kegiatan apa adanya sesuai teks asli yang dikirim tanpa bantuan AI.'}
+              </p>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem', opacity: 0.7 }}>
+                Bisa juga diatur dari chat Telegram dengan perintah <code>/ai on</code> atau <code>/ai off</code>.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleToggleAi}
+              disabled={togglingAi}
+              className={`btn ${(data.aiPolish ?? true) ? 'btn-primary' : 'glass'}`}
+              style={{ padding: '0.55rem 1.1rem', fontSize: '0.85rem' }}
+            >
+              {togglingAi ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
+              <span>{(data.aiPolish ?? true) ? 'AI Aktif' : 'AI Nonaktif'}</span>
+            </button>
+          </div>
+
           <button onClick={handleUnlink} className="btn glass" style={{ color: 'var(--error)' }}>
             <Link2Off size={16} /> Putuskan Koneksi
           </button>

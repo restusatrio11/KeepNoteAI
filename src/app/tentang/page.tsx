@@ -27,7 +27,7 @@ const techStack = [
   { name: 'Neon Postgres', version: '@neondatabase/serverless 1.0.2', desc: 'Database serverless' },
   { name: 'NextAuth', version: '5.0.0-beta.30', desc: 'Autentikasi (Auth.js)' },
   { name: 'bcryptjs', version: '3.0.3', desc: 'Hash password' },
-  { name: 'OpenRouter API', version: 'gpt-oss-120b:free', desc: 'AI (laporan & mapping)' },
+  { name: 'OpenRouter API', version: 'qwen3.8-27b:free', desc: 'AI (laporan & mapping)' },
   { name: 'grammy', version: '1.44.0', desc: 'Bot Telegram' },
   { name: 'googleapis', version: '171.4.0', desc: 'Integrasi Google Drive' },
   { name: 'zod', version: '4.3.6', desc: 'Validasi data' },

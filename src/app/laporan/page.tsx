@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, Info, FileText, ImageIcon, Video as VideoIcon, Copy, Clock, Download, RefreshCw, CheckCircle2 } from 'lucide-react';
+import Link from 'next/link';
+import { Plus, Search, Filter, ChevronLeft, ChevronRight, Edit2, Trash2, ExternalLink, Calendar, Loader2, AlertCircle, Info, FileText, ImageIcon, Video as VideoIcon, Copy, Clock, Download, RefreshCw, CheckCircle2, BookOpen } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReportModal from './ReportModal';
 import { useToast } from '@/providers/ToastProvider';
@@ -139,7 +140,11 @@ export default function LaporanPage() {
           <h1 style={{ fontWeight: 700, marginBottom: '0.4rem' }}>Histori Pelaporan</h1>
           <p className="text-muted">Kelola dan saring histori laporan kegiatan harian Anda.</p>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <Link href="/jurnal" className="btn glass" style={{ width: 'auto', color: '#93c5fd', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
+            <BookOpen size={20} />
+            <span>Jurnal Harian (DOCX/PDF)</span>
+          </Link>
           <button onClick={() => {
             const params = new URLSearchParams();
             if (fromDate) params.set('from', fromDate);

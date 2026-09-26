@@ -123,7 +123,9 @@ async function findOrCreateOwnFolder(drive: DriveClient): Promise<string> {
   } catch {
     // abaikan, langsung buat folder baru
   }
-  return await createFolder('KeepNoteAI', drive);
+  const folderId = await createFolder('KeepNoteAI', drive);
+  if (!folderId) throw new Error('Gagal membuat folder Google Drive');
+  return folderId;
 }
 
 export function sanitizeForFileName(s: string, maxLen = 50): string {

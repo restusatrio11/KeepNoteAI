@@ -174,7 +174,7 @@ cp .env.example .env.local   # jika belum ada, buat manual sesuai tabel
 | `CAPTCHA_SECRET` | ✅ | Secret verifikasi captcha login |
 | `OPENROUTER_API_KEY` | ✅ | API key OpenRouter untuk fitur AI |
 | `NEXTAUTH_URL` | ⚠️ | URL publik situs — di produksi **sebaiknya dikosongkan** (kode memakai `trustHost`) |
-| `AI_MODEL` | ➖ | Model default, mis. `google/gemini-flash-1.5` |
+| `AI_MODEL` | ➖ | Model default, mis. `qwen/qwen3.8-27b:free` |
 | `TELEGRAM_BOT_TOKEN` | ➖ | Token bot dari @BotFather |
 | `TELEGRAM_BOT_USERNAME` | ➖ | Username bot tanpa @ (default `KipappAIbot`) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | ➖ | OAuth Google Drive |

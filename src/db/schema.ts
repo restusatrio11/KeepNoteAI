@@ -9,6 +9,7 @@ export const users = pgTable('users', {
   verificationCode: text('verification_code'),
   verificationExpiry: timestamp('verification_expiry'),
   telegramPaused: boolean('telegram_paused').default(false).notNull(),
+  telegramAiPolish: boolean('telegram_ai_polish').default(true).notNull(),
   selectedRencanaId: uuid('selected_rencana_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });

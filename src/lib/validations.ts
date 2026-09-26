@@ -65,3 +65,41 @@ export const AIReviewSchema = z.object({
   feedback: z.string(),
   suggestions: z.string(),
 });
+
+export const AIDossierSchema = z.object({
+  judul: z.string(),
+  ringkasan: z.string(),
+  latarBelakang: z.string().optional().nullable(),
+  uraianKegiatan: z.array(z.string()),
+  capaianOutput: z.array(z.string()),
+  kendalaTindakLanjut: z.string().optional().nullable(),
+});
+
+export type AIDossierData = z.infer<typeof AIDossierSchema>;
+
+export interface DossierPhoto {
+  dataUrl: string; // Base64 data URL (e.g. data:image/jpeg;base64,...) or remote URL
+  caption: string;
+}
+
+export interface DossierDocumentPayload {
+  judul: string;
+  tanggal: string; // YYYY-MM-DD
+  waktu?: string;
+  tempat?: string;
+  timKerja?: string;
+  rencanaKinerja?: string;
+  pelaksana: string;
+  nipPelaksana?: string;
+  penanggungJawab?: string;
+  nipPenanggungJawab?: string;
+  jabatanPenanggungJawab?: string;
+  ringkasan: string;
+  latarBelakang?: string;
+  uraianKegiatan: string[];
+  capaianOutput: string[];
+  kendalaTindakLanjut?: string;
+  tandaTanganUrl?: string | null;
+  photos: DossierPhoto[];
+}
+

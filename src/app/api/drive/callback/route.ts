@@ -40,8 +40,8 @@ export async function GET(req: NextRequest) {
 
     let folderId: string | null = existing?.driveFolderId ?? null;
     if (!folderId && refreshToken && tokens.access_token) {
-      const drive = await getDriveClientFromTokens(tokens.access_token, tokens.refresh_token);
-      folderId = await createFolder('KeepNoteAI', drive);
+      const drive = await getDriveClientFromTokens(tokens.access_token, tokens.refresh_token || undefined);
+      folderId = (await createFolder('KeepNoteAI', drive)) ?? null;
     }
 
     await db.insert(userSettings)

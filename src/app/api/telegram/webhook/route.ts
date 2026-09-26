@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { users, masterRencana, laporan, telegramUpdates } from '@/db/schema';
+import { users, masterRencana, timKerja, laporan, telegramUpdates } from '@/db/schema';
 import { eq, and, gt } from 'drizzle-orm';
+import { getBpsReportSystemPrompt, getBpsImageSystemPrompt, polishDailyDossier } from '@/lib/ai';
+import { generateDailyDossierPdf } from '@/lib/daily-dossier-pdf';
+import { generateDailyDossierDocx } from '@/lib/daily-dossier-docx';
+import { DossierDocumentPayload } from '@/lib/validations';
 
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
@@ -23,6 +27,38 @@ function tgFetch(method: string, body: any) {
   return fetch(`https://api.telegram.org/bot${TG_TOKEN}/${method}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
+}
+
+async function sendTgDocument(chatId: string | number, fileBuffer: Uint8Array | Buffer, filename: string, caption?: string) {
+  const formData = new FormData();
+  formData.append('chat_id', String(chatId));
+  if (caption) {
+    formData.append('caption', caption);
+    formData.append('parse_mode', 'Markdown');
+  }
+  const blob = new Blob([new Uint8Array(fileBuffer)]);
+  formData.append('document', blob, filename);
+
+  const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendDocument`, {
+    method: 'POST',
+    body: formData,
+  });
+  return res.json();
+}
+
+function formatDateIndo(dateStr: string): string {
+  try {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const months = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+    ];
+    return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+  } catch {
+    return dateStr;
+  }
 }
 
 async function getUser(chatId: string) {
@@ -52,7 +88,7 @@ function findBestRencana(rencanaList: any[], hint: string) {
 
 async function callAI(messages: any[], expectJson = true) {
   const body: any = {
-    model: process.env.AI_MODEL || 'openai/gpt-oss-120b:free',
+    model: process.env.AI_MODEL || 'qwen/qwen3.8-27b:free',
     messages,
   };
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -64,12 +100,20 @@ async function callAI(messages: any[], expectJson = true) {
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  const raw = data.choices?.[0]?.message?.content || '';
+  let raw = data.choices?.[0]?.message?.content || '';
+  // Strip reasoning tokens (<think>...</think>) if present
+  raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   if (!expectJson) return { kegiatan: raw };
   const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*$/g, '').trim();
   try {
     return JSON.parse(cleaned);
   } catch {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch {}
+    }
     const obj: any = {};
     const matchK = cleaned.match(/"kegiatan"\s*:\s*"([^"]+)"/);
     if (matchK) obj.kegiatan = matchK[1];
@@ -199,18 +243,74 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    if (cmd === '/ai' || cmd === '/aion' || cmd === '/aioff' || cmd === '/ai_on' || cmd === '/ai_off') {
+      const u = await getUser(chatId);
+      if (!u) { await sendMsg(chatId, '❌ Akun belum terhubung. Ketik /start'); return NextResponse.json({ ok: true }); }
+
+      let modeParam = param.toLowerCase();
+      if (cmd === '/aion' || cmd === '/ai_on') modeParam = 'on';
+      if (cmd === '/aioff' || cmd === '/ai_off') modeParam = 'off';
+
+      if (modeParam === 'on' || modeParam === 'aktif' || modeParam === '1' || modeParam === 'enable') {
+        await db.update(users).set({ telegramAiPolish: true }).where(eq(users.id, u.id as any));
+        await sendMsg(chatId,
+          '✨ *AI Merapikan Diaktifkan!*\n\n' +
+          'Setiap teks catatan atau caption foto akan otomatis dianalisis dan dirapikan oleh AI menjadi deskripsi kegiatan formal & capaian profesional.\n\n' +
+          'Ketik `/ai off` jika ingin menonaktifkannya kapan saja.'
+        );
+      } else if (modeParam === 'off' || modeParam === 'nonaktif' || modeParam === '0' || modeParam === 'disable') {
+        await db.update(users).set({ telegramAiPolish: false }).where(eq(users.id, u.id as any));
+        await sendMsg(chatId,
+          '📝 *AI Merapikan Dinonaktifkan!*\n\n' +
+          'Bot sekarang akan mencatat laporan kegiatan *langsung apa adanya* sesuai teks asli yang Anda kirim (tanpa diproses/dirapikan oleh AI).\n\n' +
+          'Ketik `/ai on` jika ingin mengaktifkannya kembali.'
+        );
+      } else if (modeParam === 'toggle') {
+        const nextState = !(u.telegramAiPolish !== false);
+        await db.update(users).set({ telegramAiPolish: nextState }).where(eq(users.id, u.id as any));
+        const statusText = nextState ? '✨ *Diaktifkan*' : '📝 *Dinonaktifkan*';
+        await sendMsg(chatId, `🔄 Fitur AI Merapikan sekarang: ${statusText}`);
+      } else {
+        const isCurrentOn = u.telegramAiPolish !== false;
+        await sendMsg(chatId,
+          `🤖 *Pengaturan Fitur AI Merapikan*\n\n` +
+          `Status saat ini: *${isCurrentOn ? '✅ AKTIF (Merapikan via AI)' : '⏸ NONAKTIF (Catat Langsung Teks Asli)'}*\n\n` +
+          `Pilihan perintah:\n` +
+          `• \`/ai on\` — Mengaktifkan AI untuk merapikan teks kegiatan & capaian\n` +
+          `• \`/ai off\` — Menonaktifkan AI (catat persis teks apa adanya)\n` +
+          `• \`/ai toggle\` — Ganti status aktif/nonaktif`
+        );
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    if (cmd === '/jurnal' || cmd === '/laporan_harian' || cmd === '/dossier') {
+      const u = await getUser(chatId);
+      if (!u) {
+        await sendMsg(chatId, '❌ Akun belum terhubung. Ketik /start untuk menghubungkan akun.');
+        return NextResponse.json({ ok: true });
+      }
+      await handleGenerateJurnal(chatId, u, param);
+      return NextResponse.json({ ok: true });
+    }
+
     if (cmd === '/help') {
       await sendMsg(chatId,
-        '📋 *Bantuan*\n\n' +
+        '📋 *Bantuan Bot KeepNoteAI*\n\n' +
         '🔗 /link KODE — Hubungkan akun\n' +
         '📋 /rk — Lihat daftar Rencana Kerja\n' +
         '🎯 /rk KODE — Pilih target RK\n' +
-        '🔍 /status — Cek status koneksi\n' +
+        '🤖 /ai — Cek status fitur AI merapikan\n' +
+        '✨ /ai on — Aktifkan AI merapikan deskripsi\n' +
+        '📝 /ai off — Nonaktifkan AI (catat teks asli langsung)\n' +
+        '📄 /jurnal — Generate Jurnal Kerja Harian resmi (PDF & Word)\n' +
+        '📄 /jurnal <teks> — Buat jurnal langsung dari catatan cepat\n' +
+        '🔍 /status — Cek status koneksi & fitur\n' +
         '🔌 /unlink — Putuskan koneksi\n' +
         '⏸ /stop — Jeda pembuatan laporan otomatis\n' +
         '▶️ /lanjut — Lanjutkan pembuatan laporan\n\n' +
-        '📸 Kirim *foto/dokumen* — Analisis + buat laporan\n' +
-        '📝 Kirim *teks* — Deskripsikan kegiatan'
+        '📸 Kirim *foto/dokumen* — Analisis / simpan bukti + buat laporan\n' +
+        '📝 Kirim *teks* — Catat kegiatan'
       );
       return NextResponse.json({ ok: true });
     }
@@ -222,6 +322,7 @@ export async function POST(req: NextRequest) {
           ? (await db.select().from(masterRencana).where(eq(masterRencana.id, user.selectedRencanaId as any)).limit(1))[0]
           : null;
         let s = `✅ Terhubung sebagai *${user.name}* (${user.email})`;
+        s += `\n🤖 AI Merapikan: *${user.telegramAiPolish !== false ? 'Aktif' : 'Nonaktif'}* (ketik /ai)`;
         if (activeRk) s += `\n🎯 RK aktif: *${activeRk.kode}* — ${activeRk.nama}`;
         else s += '\nℹ️ Belum pilih RK. Ketik /rk untuk lihat daftar.';
         await sendMsg(chatId, s);
@@ -306,7 +407,19 @@ function toISODate(d: Date): string {
 
 async function getActiveRencana(user: any) {
   if (user.selectedRencanaId) {
-    const [r] = await db.select().from(masterRencana).where(eq(masterRencana.id, user.selectedRencanaId as any)).limit(1);
+    const [r] = await db
+      .select({
+        id: masterRencana.id,
+        nama: masterRencana.nama,
+        kode: masterRencana.kode,
+        iki: masterRencana.iki,
+        timId: masterRencana.timId,
+        timNama: timKerja.nama,
+      })
+      .from(masterRencana)
+      .leftJoin(timKerja, eq(masterRencana.timId, timKerja.id))
+      .where(eq(masterRencana.id, user.selectedRencanaId as any))
+      .limit(1);
     if (r) return r;
   }
   return null;
@@ -335,42 +448,76 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       : ext === 'pdf' ? 'application/pdf'
       : 'application/octet-stream';
 
-    // 1. Tentukan kegiatan & capaian
+    // 1. Dapatkan Rencana Kerja aktif jika ada (untuk grounding konteks BPS)
+    const activeRk = await getActiveRencana(user);
+
+    // 2. Tentukan kegiatan & capaian
     let kegiatan = caption?.trim();
     let capaian = 'Tercapai sesuai target.';
+    const isAiPolish = user.telegramAiPolish !== false;
+
     if (kegiatan) {
-      await sendMsg(chatId, '🧠 AI merapikan deskripsi...');
-      const aiResult = await callAI([
-        { role: 'system', content: 'Convert casual work descriptions into professional Indonesian for an official report. Return JSON: { "kegiatan": "professional activity description", "capaian": "achievement description" }' },
-        { role: 'user', content: kegiatan },
-      ]);
-      if (aiResult.kegiatan) { kegiatan = aiResult.kegiatan; capaian = aiResult.capaian || capaian; }
+      if (isAiPolish) {
+        await sendMsg(chatId, '🧠 AI merapikan deskripsi...');
+        try {
+          const systemPrompt = getBpsReportSystemPrompt({
+            tim: activeRk?.timNama,
+            rencana: activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined,
+            iki: activeRk?.iki || undefined,
+          });
+          const aiResult = await callAI([
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: kegiatan },
+          ]);
+          if (aiResult.kegiatan) { kegiatan = aiResult.kegiatan; capaian = aiResult.capaian || capaian; }
+        } catch (err) {
+          console.error('AI polish error:', err);
+        }
+      }
     } else {
-      await sendMsg(chatId, '🧠 AI menganalisis gambar...');
-      const base64 = buffer.toString('base64');
-      const aiResult = await callAI([
-        { role: 'system', content: 'Analyze this work document/image. Return JSON: { "kegiatan": "professional activity in Indonesian", "capaian": "achievement description in Indonesian" }' },
-        { role: 'user', content: [{ type: 'text', text: 'Describe this work activity.' }, { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } }] },
-      ]);
-      kegiatan = aiResult.kegiatan;
-      capaian = aiResult.capaian || capaian;
-      if (!kegiatan) {
-        await sendMsg(chatId, '❌ Tidak ada deskripsi. Kirim foto dengan caption atau ketik deskripsi kegiatan.');
+      if (isAiPolish) {
+        await sendMsg(chatId, '🧠 AI menganalisis gambar...');
+        const base64 = buffer.toString('base64');
+        const systemPrompt = getBpsImageSystemPrompt(activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined);
+        const aiResult = await callAI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: [
+            { type: 'text', text: 'Analisis bukti dokumen/foto kegiatan pegawai BPS ini dan rumuskan deskripsi kegiatan serta capaian formalnya.' },
+            { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } }
+          ]},
+        ]);
+        kegiatan = aiResult.kegiatan;
+        capaian = aiResult.capaian || capaian;
+        if (!kegiatan) {
+          await sendMsg(chatId, '❌ Tidak ada deskripsi terdeteksi. Kirim foto dengan caption atau ketik deskripsi kegiatan.');
+          return;
+        }
+      } else {
+        await sendMsg(chatId, '⚠️ *Mode tanpa AI aktif*: Silakan kirim foto/dokumen disertai caption deskripsi kegiatan, atau ketik `/ai on` untuk mengaktifkan analisis AI otomatis.');
         return;
       }
     }
 
-    // 2. Tentukan Rencana Kerja
-    const activeRk = await getActiveRencana(user);
+    // 3. Tentukan Rencana Kerja final
     let rencana = activeRk;
     if (!rencana) {
       const rencanaList = await getUserRencana(user.id);
-      const rkCodes = rencanaList.map((r: any) => `${r.kode}: ${r.nama}`).join('\n');
-      const aiHint = await callAI([
-        { role: 'system', content: `Match the activity to one of these RK. Return JSON: { "rencanaHint": "the RK code" }\nAvailable RK:\n${rkCodes}` },
-        { role: 'user', content: kegiatan },
-      ]);
-      rencana = findBestRencana(rencanaList, aiHint.rencanaHint || kegiatan);
+      if (rencanaList.length > 0) {
+        if (isAiPolish) {
+          try {
+            const rkCodes = rencanaList.map((r: any) => `${r.kode}: ${r.nama}`).join('\n');
+            const aiHint = await callAI([
+              { role: 'system', content: `Anda adalah asisten BPS. Cocokkan kegiatan statistik ini ke salah satu kode RK yang paling sesuai. Kembalikan JSON: { "rencanaHint": "KODE RK" }\nDaftar RK:\n${rkCodes}` },
+              { role: 'user', content: kegiatan },
+            ]);
+            rencana = findBestRencana(rencanaList, aiHint.rencanaHint || kegiatan);
+          } catch {
+            rencana = findBestRencana(rencanaList, kegiatan);
+          }
+        } else {
+          rencana = findBestRencana(rencanaList, kegiatan);
+        }
+      }
     }
     if (!rencana) {
       await sendMsg(chatId, `📋 *Kegiatan:* ${kegiatan}\n\n⚠️ Tidak ada RK yang cocok. Ketik /rk untuk memilih target RK.`);
@@ -427,7 +574,8 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       buktiUrls,
     });
 
-    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${kegiatan}\n*Capaian:* ${capaian}\n*Progres:* 100%\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
+    const modeTag = isAiPolish ? '' : '\n_Mode tanpa AI (teks asli dicatat langsung)_';
+    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${kegiatan}\n*Capaian:* ${capaian}\n*Progres:* 100%${modeTag}\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
   } catch (e) {
     console.error('File handler error:', e);
     await sendMsg(chatId, '❌ Terjadi kesalahan. Coba lagi nanti.');
@@ -440,59 +588,241 @@ async function handleText(chatId: string, user: any, text: string) {
     return;
   }
   const activeRk = await getActiveRencana(user);
-  const rkContext = activeRk
-    ? `\n\nLaporan ini harus masuk ke RK: *${activeRk.kode}* — ${activeRk.nama}.`
-    : '';
-
   const urls = extractUrls(text);
   const buktiUrls = urls.length ? JSON.stringify(urls) : null;
-  const textForAI = text.replace(URL_REGEX, '').replace(/\s{2,}/g, ' ').trim() || 'Menyertakan bukti pendukung kegiatan.';
+  const rawText = text.replace(URL_REGEX, '').replace(/\s{2,}/g, ' ').trim();
 
-  await sendMsg(chatId, '⏳ Memproses deskripsi kegiatan...');
-  try {
-    const aiResult = await callAI([
-      {
-        role: 'system',
-        content: `Convert casual work descriptions into professional Indonesian. Return JSON: { "kegiatan": "professional activity description", "capaian": "achievement description" }${rkContext}`,
-      },
-      { role: 'user', content: textForAI },
-    ]);
+  if (!rawText && !urls.length) {
+    await sendMsg(chatId, '❌ Pesan kosong. Kirim teks kegiatan untuk membuat laporan.');
+    return;
+  }
 
-    if (!aiResult.kegiatan) {
-      await sendMsg(chatId, '❌ Gagal memproses. Coba deskripsikan lebih detail.');
-      return;
-    }
+  const isAiPolish = user.telegramAiPolish !== false;
+  let kegiatan = rawText || 'Menyertakan bukti pendukung kegiatan.';
+  let capaian = 'Tercapai sesuai target.';
 
-    let rencana = activeRk;
-    if (!rencana) {
-      const rencanaList = await getUserRencana(user.id);
-      const rkCodes = rencanaList.map((r: any) => `${r.kode}: ${r.nama}`).join('\n');
-      const aiHint = await callAI([
-        { role: 'system', content: `Match the activity to one of these RK. Return JSON: { "rencanaHint": "the RK code" }\nAvailable RK:\n${rkCodes}` },
-        { role: 'user', content: textForAI },
+  if (isAiPolish) {
+    await sendMsg(chatId, '🧠 AI merapikan deskripsi kegiatan...');
+    try {
+      const systemPrompt = getBpsReportSystemPrompt({
+        tim: activeRk?.timNama,
+        rencana: activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined,
+        iki: activeRk?.iki || undefined,
+      });
+
+      const aiResult = await callAI([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: kegiatan },
       ]);
-      rencana = findBestRencana(rencanaList, aiHint.rencanaHint || aiResult.kegiatan);
-    }
 
-    if (!rencana) {
-      await sendMsg(chatId, `📋 *Hasil Analisis:*\n\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || '-'}\n\n⚠️ Tidak ada Rencana Kerja yang cocok. Ketik /rk untuk memilih target RK.`);
+      if (aiResult.kegiatan) {
+        kegiatan = aiResult.kegiatan;
+        capaian = aiResult.capaian || capaian;
+      }
+    } catch (e) {
+      console.error('AI polish text error:', e);
+    }
+  }
+
+  let rencana = activeRk;
+  if (!rencana) {
+    const rencanaList = await getUserRencana(user.id);
+    if (rencanaList.length === 0) {
+      await sendMsg(chatId, '📭 Belum ada Rencana Kerja. Buat dulu di web > Rencana.');
       return;
     }
 
-    const tgl = parseTanggal(text) || new Date();
-    const today = toISODate(tgl);
-    await db.insert(laporan).values({
-      userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
-      kegiatan: aiResult.kegiatan, progress: 100, capaian: aiResult.capaian || 'Tercapai sesuai target.',
-      buktiUrls,
-    });
+    if (isAiPolish) {
+      try {
+        const rkCodes = rencanaList.map((r: any) => `${r.kode}: ${r.nama}`).join('\n');
+        const aiHint = await callAI([
+          { role: 'system', content: `Anda adalah asisten BPS. Cocokkan kegiatan statistik ini ke salah satu kode RK yang paling sesuai. Kembalikan JSON: { "rencanaHint": "KODE RK" }\nDaftar RK:\n${rkCodes}` },
+          { role: 'user', content: kegiatan },
+        ]);
+        rencana = findBestRencana(rencanaList, aiHint.rencanaHint || kegiatan);
+      } catch {
+        rencana = findBestRencana(rencanaList, kegiatan);
+      }
+    } else {
+      rencana = findBestRencana(rencanaList, kegiatan);
+    }
+  }
 
-    const buktiNote = buktiUrls ? `\n*Bukti:* ${urls.length} tautan${urls.length > 1 ? '' : ''}` : '';
-    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${aiResult.kegiatan}\n*Capaian:* ${aiResult.capaian || 'Tercapai'}\n*Progres:* 100%${buktiNote}\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
-  } catch (e) {
-    console.error('Text handler error:', e);
-    await sendMsg(chatId, '❌ Terjadi kesalahan. Coba lagi nanti.');
+  if (!rencana) {
+    await sendMsg(chatId, `📋 *Kegiatan:* ${kegiatan}\n\n⚠️ Tidak ada Rencana Kerja yang cocok. Ketik /rk untuk memilih target RK.`);
+    return;
+  }
+
+  const tgl = parseTanggal(text) || new Date();
+  const today = toISODate(tgl);
+  await db.insert(laporan).values({
+    userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
+    kegiatan, progress: 100, capaian,
+    buktiUrls,
+  });
+
+  const buktiNote = buktiUrls ? `\n*Bukti:* ${urls.length} tautan` : '';
+  const modeTag = isAiPolish ? '' : '\n_Mode tanpa AI (teks asli dicatat langsung)_';
+  await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${kegiatan}\n*Capaian:* ${capaian}\n*Progres:* 100%${buktiNote}${modeTag}\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
+}
+
+async function handleGenerateJurnal(chatId: string, user: any, param: string) {
+  const todayDate = toISODate(new Date());
+  let targetDate = todayDate;
+  let rawDescription = '';
+
+  const parsedDate = parseTanggal(param);
+  if (parsedDate) {
+    targetDate = toISODate(parsedDate);
+  } else if (param.toLowerCase() === 'kemarin') {
+    const yest = new Date();
+    yest.setDate(yest.getDate() - 1);
+    targetDate = toISODate(yest);
+  } else if (param.trim().length > 0 && param.trim().split(' ').length > 2) {
+    // User typed an actual activity note directly!
+    rawDescription = param.trim();
+  }
+
+  // If no manual description given in param, fetch from user's recorded reports for targetDate
+  let photos: { dataUrl: string; caption: string }[] = [];
+  if (!rawDescription) {
+    const reports = await db
+      .select({
+        kegiatan: laporan.kegiatan,
+        capaian: laporan.capaian,
+        buktiUrls: laporan.buktiUrls,
+      })
+      .from(laporan)
+      .where(and(eq(laporan.userId, user.id as any), eq(laporan.tanggalMulai, targetDate)))
+      .orderBy(laporan.createdAt);
+
+    if (reports.length === 0) {
+      await sendMsg(
+        chatId,
+        `📭 *Belum ada catatan kegiatan untuk tanggal ${formatDateIndo(targetDate)}.*\n\n` +
+        `Anda dapat membuat laporan dengan cara:\n` +
+        `1. Kirim catatan kegiatan atau foto hari ini, lalu ketik \`/jurnal\`\n` +
+        `2. Atau buat langsung dengan format:\n` +
+        `\`/jurnal <tuliskan aktivitas Anda hari ini>\`\n\n` +
+        `_Contoh:_\n` +
+        `\`/jurnal Pagi briefing mitra Sakernas di aula. Siang verifikasi anomali Fasih di desa binaan. Sore rekap 15 dokumen.\``
+      );
+      return;
+    }
+
+    // Aggregate activities
+    rawDescription = reports
+      .map((r, i) => `${i + 1}. ${r.kegiatan} (Capaian: ${r.capaian})`)
+      .join('\n');
+
+    // Extract photos from buktiUrls
+    for (const r of reports) {
+      if (r.buktiUrls) {
+        try {
+          const urls = JSON.parse(r.buktiUrls);
+          if (Array.isArray(urls)) {
+            for (const u of urls) {
+              if (typeof u === 'string' && u.startsWith('http')) {
+                photos.push({
+                  dataUrl: u,
+                  caption: `Dokumentasi kegiatan ${formatDateIndo(targetDate)}`,
+                });
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+
+  await sendMsg(
+    chatId,
+    `⏳ *Sedang menyusun Jurnal Kerja Harian BPS (${formatDateIndo(targetDate)})...*\n` +
+    `Mohon tunggu sebentar, dokumen PDF & Word sedang diproses.`
+  );
+
+  try {
+    const activeRk = await getActiveRencana(user);
+    const isAiPolish = user.telegramAiPolish !== false;
+
+    let dossierData: any;
+    if (isAiPolish) {
+      dossierData = await polishDailyDossier(rawDescription, {
+        tim: activeRk?.timNama || 'Tim Kerja BPS',
+        rencana: activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined,
+        pelaksana: user.name || 'Pegawai BPS',
+        lokasi: 'Kantor / Wilayah Tugas BPS',
+      });
+    } else {
+      const lines = rawDescription.split('\n').filter((l) => l.trim().length > 0);
+      dossierData = {
+        judul: 'Laporan Pelaksanaan Kegiatan Harian',
+        ringkasan: lines[0] || rawDescription,
+        latarBelakang: null,
+        uraianKegiatan: lines.length > 1 ? lines : [rawDescription],
+        capaianOutput: ['Target kegiatan terlaksana sesuai rencana kedinasan BPS.'],
+        kendalaTindakLanjut: null,
+      };
+    }
+
+    const payload: DossierDocumentPayload = {
+      judul: dossierData.judul || 'Laporan Pelaksanaan Kegiatan Harian',
+      tanggal: targetDate,
+      waktu: '08.00 - 16.00 WIB',
+      tempat: 'Kantor BPS & Wilayah Tugas',
+      timKerja: activeRk?.timNama || 'Badan Pusat Statistik',
+      rencanaKinerja: activeRk ? `${activeRk.nama} (${activeRk.kode})` : 'Pelaksanaan Tugas Kedinasan BPS',
+      pelaksana: user.name || 'Pegawai BPS',
+      nipPelaksana: undefined,
+      penanggungJawab: 'Ketua Tim Kerja',
+      jabatanPenanggungJawab: 'Ketua Tim Kerja',
+      ringkasan: dossierData.ringkasan || rawDescription,
+      latarBelakang: dossierData.latarBelakang || undefined,
+      uraianKegiatan:
+        dossierData.uraianKegiatan?.length > 0
+          ? dossierData.uraianKegiatan
+          : [rawDescription],
+      capaianOutput:
+        dossierData.capaianOutput?.length > 0
+          ? dossierData.capaianOutput
+          : ['Kegiatan selesai dengan baik.'],
+      kendalaTindakLanjut: dossierData.kendalaTindakLanjut || undefined,
+      photos: photos.slice(0, 6),
+    };
+
+    // Generate PDF
+    const pdfBytes = await generateDailyDossierPdf(payload);
+    const safeTitle = (payload.judul || 'Jurnal_BPS')
+      .replace(/[^a-zA-Z0-9_\-]/g, '_')
+      .slice(0, 30);
+    const pdfFilename = `${safeTitle}_${targetDate}.pdf`;
+
+    await sendTgDocument(
+      chatId,
+      pdfBytes,
+      pdfFilename,
+      `✅ *Jurnal Kegiatan Harian BPS Berhasil Dibuat!*\n\n` +
+      `📅 *Tanggal:* ${formatDateIndo(targetDate)}\n` +
+      `👤 *Pelaksana:* ${user.name}\n` +
+      `🎯 *Program:* ${payload.rencanaKinerja}\n\n` +
+      `📄 _Dokumen PDF resmi ber-Kop BPS siap cetak._`
+    );
+
+    // Generate DOCX
+    const docxBuf = await generateDailyDossierDocx(payload);
+    const docxFilename = `${safeTitle}_${targetDate}.docx`;
+
+    await sendTgDocument(
+      chatId,
+      docxBuf,
+      docxFilename,
+      `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.`
+    );
+  } catch (err: any) {
+    console.error('Error generating jurnal in Telegram:', err);
+    await sendMsg(chatId, `❌ Gagal membuat dokumen jurnal: ${err?.message || 'Terjadi kesalahan sistem.'}`);
   }
 }
 
 export const GET = POST;
+

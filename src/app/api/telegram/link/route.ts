@@ -25,7 +25,24 @@ export async function GET() {
     botUsername: process.env.TELEGRAM_BOT_USERNAME || 'KipappAIbot',
     isLinked: !!user?.telegramChatId,
     chatId: user?.telegramChatId || null,
+    aiPolish: user?.telegramAiPolish !== false,
   });
+}
+
+export async function PATCH(req: Request) {
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  try {
+    const body = await req.json();
+    if (typeof body.aiPolish === 'boolean') {
+      await db.update(users).set({ telegramAiPolish: body.aiPolish }).where(eq(users.id, session.user.id as any));
+      return NextResponse.json({ success: true, aiPolish: body.aiPolish });
+    }
+    return NextResponse.json({ error: 'aiPolish boolean required' }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
 }
 
 export async function DELETE() {
@@ -36,3 +53,4 @@ export async function DELETE() {
 
   return NextResponse.json({ success: true });
 }
+
