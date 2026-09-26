@@ -29,6 +29,22 @@ function tgFetch(method: string, body: any) {
   });
 }
 
+function answerCallbackQuery(callbackQueryId: string, text?: string) {
+  return fetch(`https://api.telegram.org/bot${TG_TOKEN}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
+  });
+}
+
+function editMsgText(chatId: string | number, messageId: string | number, text: string, extra?: any) {
+  return fetch(`https://api.telegram.org/bot${TG_TOKEN}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: String(chatId), message_id: Number(messageId), text, parse_mode: 'Markdown', ...extra }),
+  });
+}
+
 async function sendTgDocument(chatId: string | number, fileBuffer: Uint8Array | Buffer, filename: string, caption?: string) {
   const formData = new FormData();
   formData.append('chat_id', String(chatId));
@@ -67,7 +83,19 @@ async function getUser(chatId: string) {
 }
 
 async function getUserRencana(userId: string) {
-  return db.select().from(masterRencana).where(eq(masterRencana.userId, userId as any));
+  return db
+    .select({
+      id: masterRencana.id,
+      nama: masterRencana.nama,
+      kode: masterRencana.kode,
+      iki: masterRencana.iki,
+      timId: masterRencana.timId,
+      timNama: timKerja.nama,
+    })
+    .from(masterRencana)
+    .leftJoin(timKerja, eq(masterRencana.timId, timKerja.id))
+    .where(eq(masterRencana.userId, userId as any))
+    .orderBy(masterRencana.kode);
 }
 
 function findBestRencana(rencanaList: any[], hint: string) {
@@ -128,6 +156,76 @@ async function callAI(messages: any[], expectJson = true) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
+
+  // 1. Handle Callback Query (e.g. interactive inline buttons for choosing RK)
+  const cb = body?.callback_query;
+  if (cb) {
+    const cbChatId = String(cb.message?.chat?.id || cb.from?.id);
+    const cbUser = await getUser(cbChatId);
+    const data: string = cb.data || '';
+    const cbMsgId = cb.message?.message_id;
+
+    if (!cbUser) {
+      await answerCallbackQuery(cb.id, 'Akun belum terhubung. Ketik /start');
+      return NextResponse.json({ ok: true });
+    }
+
+    if (data.startsWith('setrk:')) {
+      const targetId = data.replace('setrk:', '');
+
+      if (targetId === 'auto') {
+        await db
+          .update(users)
+          .set({ selectedRencanaId: null })
+          .where(eq(users.id, cbUser.id as any));
+
+        await answerCallbackQuery(cb.id, '🤖 Mode Deteksi Otomatis AI aktif');
+        const text =
+          `🤖 *Target RK: Deteksi Otomatis AI (Aktif)*\n\n` +
+          `Setiap kali Anda mengirim catatan kegiatan atau foto, AI akan otomatis mendeteksi dan mengarahkan laporan ke RK yang paling cocok.\n\n` +
+          `_Ketik /rk untuk memilih target RK spesifik kapan saja._`;
+
+        if (cbMsgId) {
+          await editMsgText(cbChatId, cbMsgId, text);
+        } else {
+          await sendMsg(cbChatId, text);
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      const list = await getUserRencana(cbUser.id);
+      const matched = list.find((r: any) => r.id === targetId);
+
+      if (matched) {
+        await db
+          .update(users)
+          .set({ selectedRencanaId: matched.id })
+          .where(eq(users.id, cbUser.id as any));
+
+        await answerCallbackQuery(cb.id, `✅ Dipilih: ${matched.nama.slice(0, 30)}`);
+        const confirmText =
+          `✅ *Target RK Aktif Berhasil Diganti!*\n\n` +
+          `📌 *${matched.nama}*\n` +
+          `🏷️ Kode: \`${matched.kode}\`\n` +
+          (matched.timNama ? `👥 Tim: ${matched.timNama}\n\n` : '\n') +
+          `Laporan berikutnya akan otomatis dicatat ke RK ini.\n\n` +
+          `_Ketik /rk kapan saja untuk ganti RK atau /rk auto untuk deteksi otomatis._`;
+
+        if (cbMsgId) {
+          await editMsgText(cbChatId, cbMsgId, confirmText);
+        } else {
+          await sendMsg(cbChatId, confirmText);
+        }
+      } else {
+        await answerCallbackQuery(cb.id, 'RK tidak ditemukan.');
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    await answerCallbackQuery(cb.id);
+    return NextResponse.json({ ok: true });
+  }
+
   const msg = body?.message;
   if (!msg) return NextResponse.json({ ok: true });
 
@@ -208,7 +306,10 @@ export async function POST(req: NextRequest) {
 
     if (cmd === '/rk') {
       const user = await getUser(chatId);
-      if (!user) { await sendMsg(chatId, '❌ Akun belum terhubung. Ketik /start'); return NextResponse.json({ ok: true }); }
+      if (!user) {
+        await sendMsg(chatId, '❌ Akun belum terhubung. Ketik /start');
+        return NextResponse.json({ ok: true });
+      }
 
       const list = await getUserRencana(user.id);
       if (list.length === 0) {
@@ -217,29 +318,127 @@ export async function POST(req: NextRequest) {
       }
 
       if (param) {
-        const matched = list.find((r: any) => r.kode?.toLowerCase() === param.toLowerCase());
-        if (!matched) {
-          await sendMsg(chatId, `❌ Kode *${param}* tidak ditemukan.\n\nKetik /rk untuk lihat daftar RK.`);
+        const cleanParam = param.trim().toLowerCase();
+
+        // 1. Reset / Auto detection
+        if (cleanParam === 'auto' || cleanParam === 'reset' || cleanParam === 'otomatis') {
+          await db
+            .update(users)
+            .set({ selectedRencanaId: null })
+            .where(eq(users.id, user.id as any));
+
+          await sendMsg(
+            chatId,
+            `🤖 *Target RK: Deteksi Otomatis AI (Aktif)*\n\n` +
+            `AI akan otomatis mencocokkan setiap laporan kegiatan ke Rencana Kerja yang paling sesuai.`
+          );
           return NextResponse.json({ ok: true });
         }
-        await db.update(users).set({ selectedRencanaId: matched.id }).where(eq(users.id, user.id as any));
-        await sendMsg(chatId,
-          `✅ *Target RK diperbarui!*\n\n` +
-          `*${matched.kode}* — ${matched.nama}\n\n` +
-          `Laporan selanjutnya akan otomatis mengarah ke RK ini.`
-        );
-      } else {
-        const activeRk = user.selectedRencanaId
-          ? list.find((r: any) => r.id === user.selectedRencanaId)
-          : null;
-        let msg = `📋 *Daftar Rencana Kerja (${list.length})*\n\n`;
-        for (const r of list) {
-          const active = activeRk && r.id === activeRk.id ? ' ✅ *(aktif)*' : '';
-          msg += `▸ *${r.kode}* — ${r.nama}${active}\n`;
+
+        // 2. Short number shortcut: e.g. "/rk 1", "/rk 2"
+        const numIndex = parseInt(cleanParam);
+        let matched: any = null;
+
+        if (!isNaN(numIndex) && numIndex >= 1 && numIndex <= list.length) {
+          matched = list[numIndex - 1];
         }
-        msg += `\nGunakan: \`/rk KODE\` untuk memilih target RK.`;
-        await sendMsg(chatId, msg);
+
+        // 3. Exact code match
+        if (!matched) {
+          matched = list.find((r: any) => r.kode?.toLowerCase() === cleanParam);
+        }
+
+        // 4. Keyword / Name partial search
+        if (!matched) {
+          const candidates = list.filter((r: any) =>
+            r.nama.toLowerCase().includes(cleanParam) ||
+            r.kode.toLowerCase().includes(cleanParam)
+          );
+
+          if (candidates.length === 1) {
+            matched = candidates[0];
+          } else if (candidates.length > 1) {
+            const inlineKeyboard = candidates.map((r: any) => {
+              const label = `${r.kode} - ${r.nama}`;
+              const truncatedLabel = label.length > 36 ? label.slice(0, 33) + '...' : label;
+              return [{ text: truncatedLabel, callback_data: `setrk:${r.id}` }];
+            });
+
+            await sendMsg(
+              chatId,
+              `🔍 Ditemukan *${candidates.length}* RK untuk kata kunci "*${param}*".\n` +
+              `Silakan sentuh tombol di bawah untuk memilih:`,
+              { reply_markup: { inline_keyboard: inlineKeyboard } }
+            );
+            return NextResponse.json({ ok: true });
+          }
+        }
+
+        if (!matched) {
+          await sendMsg(
+            chatId,
+            `❌ Tidak ditemukan RK yang cocok dengan "*${param}*".\n\n` +
+            `Ketik \`/rk\` untuk melihat daftar dan memilih dengan satu sentuhan tombol.`
+          );
+          return NextResponse.json({ ok: true });
+        }
+
+        await db
+          .update(users)
+          .set({ selectedRencanaId: matched.id })
+          .where(eq(users.id, user.id as any));
+
+        await sendMsg(
+          chatId,
+          `✅ *Target RK aktif diperbarui!*\n\n` +
+          `📌 *${matched.nama}*\n` +
+          `🏷️ Kode: \`${matched.kode}\`\n` +
+          (matched.timNama ? `👥 Tim: ${matched.timNama}\n\n` : '\n') +
+          `Laporan selanjutnya akan otomatis dicatat ke RK ini.`
+        );
+        return NextResponse.json({ ok: true });
       }
+
+      // No param: Show interactive buttons and number list
+      const activeRk = user.selectedRencanaId
+        ? list.find((r: any) => r.id === user.selectedRencanaId)
+        : null;
+
+      let msg = `📋 *Pilih Target Rencana Kerja (${list.length})*\n\n`;
+      if (activeRk) {
+        msg += `🎯 *RK Aktif Saat Ini:*\n👉 *${activeRk.nama}*\n🏷️ \`${activeRk.kode}\`\n\n`;
+      } else {
+        msg += `🤖 *Status:* Deteksi Otomatis AI (berdasarkan isi kegiatan)\n\n`;
+      }
+
+      msg += `Silakan sentuh tombol di bawah untuk memilih secara instan:\n`;
+
+      const inlineKeyboard: any[] = [];
+      list.forEach((r: any, idx: number) => {
+        const isActive = activeRk && r.id === activeRk.id;
+        const icon = isActive ? '✅ ' : `${idx + 1}. `;
+        const label = `${icon}${r.nama}`;
+        const truncatedLabel = label.length > 36 ? label.slice(0, 33) + '...' : label;
+        inlineKeyboard.push([
+          {
+            text: truncatedLabel,
+            callback_data: `setrk:${r.id}`,
+          },
+        ]);
+      });
+
+      inlineKeyboard.push([
+        {
+          text: activeRk ? '🤖 Gunakan Deteksi Otomatis AI' : '✅ Deteksi Otomatis AI (Aktif)',
+          callback_data: 'setrk:auto',
+        },
+      ]);
+
+      msg += `\n_💡 Anda juga dapat mengetik nomor urutnya langsung: misal \`/rk 1\`, \`/rk 2\`, atau kata kunci seperti \`/rk sakernas\`._`;
+
+      await sendMsg(chatId, msg, {
+        reply_markup: { inline_keyboard: inlineKeyboard },
+      });
       return NextResponse.json({ ok: true });
     }
 
@@ -298,8 +497,8 @@ export async function POST(req: NextRequest) {
       await sendMsg(chatId,
         '📋 *Bantuan Bot KeepNoteAI*\n\n' +
         '🔗 /link KODE — Hubungkan akun\n' +
-        '📋 /rk — Lihat daftar Rencana Kerja\n' +
-        '🎯 /rk KODE — Pilih target RK\n' +
+        '🎯 /rk — Pilih RK (tombol interaktif, nomor /rk 1, atau cari nama /rk sakernas)\n' +
+        '🤖 /rk auto — Deteksi otomatis target RK oleh AI\n' +
         '🤖 /ai — Cek status fitur AI merapikan\n' +
         '✨ /ai on — Aktifkan AI merapikan deskripsi\n' +
         '📝 /ai off — Nonaktifkan AI (catat teks asli langsung)\n' +
