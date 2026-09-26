@@ -774,8 +774,6 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
       rencanaKinerja: activeRk ? `${activeRk.nama} (${activeRk.kode})` : 'Pelaksanaan Tugas Kedinasan BPS',
       pelaksana: user.name || 'Pegawai BPS',
       nipPelaksana: undefined,
-      penanggungJawab: 'Ketua Tim Kerja',
-      jabatanPenanggungJawab: 'Ketua Tim Kerja',
       ringkasan: dossierData.ringkasan || rawDescription,
       latarBelakang: dossierData.latarBelakang || undefined,
       uraianKegiatan:

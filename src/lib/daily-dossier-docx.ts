@@ -563,12 +563,10 @@ export async function generateDailyDossierDocx(data: DossierDocumentPayload): Pr
     }
   }
 
-  // 10. LEMBAR PENGESAHAN / TANDA TANGAN
+  // 10. LEMBAR PENGESAHAN / TANDA TANGAN (Hanya Pelaksana Kegiatan)
   children.push(new Paragraph({ spacing: { before: 360 } }));
 
   const tempatTgl = `${data.tempat?.split('/')[0]?.trim() || 'Tempat Tugas'}, ${formatDateIndo(data.tanggal)}`;
-  const namaPenanggungJawab = data.penanggungJawab || 'Ketua Tim Kerja';
-  const jabatanPenanggungJawab = data.jabatanPenanggungJawab || 'Penanggung Jawab / Ketua Tim';
 
   let ttdBuffer: Buffer | null = null;
   if (data.tandaTanganUrl) {
@@ -598,6 +596,14 @@ export async function generateDailyDossierDocx(data: DossierDocumentPayload): Pr
           } as any),
         ],
         spacing: { before: 60, after: 100 },
+      })
+    );
+  } else {
+    // Ruang tanda tangan manual jika tidak upload tanda tangan
+    pelaksanaCellChildren.push(
+      new Paragraph({
+        spacing: { before: 180, after: 400 },
+        children: [],
       })
     );
   }
@@ -640,42 +646,23 @@ export async function generateDailyDossierDocx(data: DossierDocumentPayload): Pr
       new TableRow({
         children: [
           new TableCell({
-            width: { size: 50, type: WidthType.PERCENTAGE },
-            children: [
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [new TextRun({ text: 'Mengetahui,', size: 20, font: 'Calibri' })],
-              }),
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [new TextRun({ text: jabatanPenanggungJawab, bold: true, size: 20, font: 'Calibri' })],
-                spacing: { after: 800 }, // Space for signature
-              }),
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [
-                  new TextRun({
-                    text: `( ${namaPenanggungJawab} )`,
-                    bold: true,
-                    size: 20,
-                    font: 'Calibri',
-                  }),
-                ],
-              }),
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [
-                  new TextRun({
-                    text: data.nipPenanggungJawab ? `NIP. ${data.nipPenanggungJawab}` : 'NIP. ........................................',
-                    size: 19,
-                    font: 'Calibri',
-                  }),
-                ],
-              }),
-            ],
+            width: { size: 55, type: WidthType.PERCENTAGE },
+            borders: {
+              top: noBorder(),
+              bottom: noBorder(),
+              left: noBorder(),
+              right: noBorder(),
+            },
+            children: [new Paragraph({ children: [] })],
           }),
           new TableCell({
-            width: { size: 50, type: WidthType.PERCENTAGE },
+            width: { size: 45, type: WidthType.PERCENTAGE },
+            borders: {
+              top: noBorder(),
+              bottom: noBorder(),
+              left: noBorder(),
+              right: noBorder(),
+            },
             children: pelaksanaCellChildren,
           }),
         ],

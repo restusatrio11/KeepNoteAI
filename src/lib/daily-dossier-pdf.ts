@@ -410,17 +410,12 @@ export async function generateDailyDossierPdf(data: DossierDocumentPayload): Pro
     }
   }
 
-  // 10. TANDA TANGAN / PENGESAHAN
-  ensureSpace(45);
+  // 10. TANDA TANGAN / PENGESAHAN (Hanya Pelaksana Kegiatan)
+  ensureSpace(40);
   currentY += 4;
 
   const tempatTgl = `${data.tempat?.split('/')[0]?.trim() || 'Tempat Tugas'}, ${formatDateIndo(data.tanggal)}`;
-  const namaPenanggungJawab = data.penanggungJawab || 'Ketua Tim Kerja';
-  const jabatanPenanggungJawab = data.jabatanPenanggungJawab || 'Penanggung Jawab / Ketua Tim';
-
-  const halfWidth = contentWidth / 2;
-  const leftX = margin + halfWidth / 2;
-  const rightX = margin + halfWidth + halfWidth / 2;
+  const rightX = margin + contentWidth * 0.75; // Right-aligned signature column center
 
   // Check optional signature image for pelaksana
   let ttdBase64: string | null = null;
@@ -428,19 +423,13 @@ export async function generateDailyDossierPdf(data: DossierDocumentPayload): Pro
     ttdBase64 = await resolveImageToBase64(data.tandaTanganUrl);
   }
 
-  // Left Column: Mengetahui
+  // Pelaksana Header
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(30, 41, 59);
-  doc.text('Mengetahui,', leftX, currentY, { align: 'center' });
-  doc.setFont('helvetica', 'bold');
-  doc.text(jabatanPenanggungJawab, leftX, currentY + 4, { align: 'center' });
-
-  // Right Column: Pelaksana
-  doc.setFont('helvetica', 'normal');
   doc.text(tempatTgl, rightX, currentY, { align: 'center' });
   doc.setFont('helvetica', 'bold');
-  doc.text('Pelaksana Kegiatan,', rightX, currentY + 4, { align: 'center' });
+  doc.text('Pelaksana Kegiatan,', rightX, currentY + 4.5, { align: 'center' });
 
   let sigY = currentY + 22;
 
@@ -451,29 +440,17 @@ export async function generateDailyDossierPdf(data: DossierDocumentPayload): Pro
       const imgFmt = ['PNG', 'JPEG', 'WEBP'].includes(format) ? format : 'PNG';
       const ttdWidth = 36;
       const ttdHeight = 15;
-      doc.addImage(ttdBase64, imgFmt as any, rightX - ttdWidth / 2, currentY + 6, ttdWidth, ttdHeight);
-      sigY = currentY + 23;
+      doc.addImage(ttdBase64, imgFmt as any, rightX - ttdWidth / 2, currentY + 6.5, ttdWidth, ttdHeight);
+      sigY = currentY + 23.5;
     } catch (e) {
       console.warn('PDF signature render error:', e);
     }
   } else {
-    // Tanpa upload tanda tangan: tidak ada gambar tanda tangan disematkan
-    sigY = currentY + 18;
+    // Tanpa upload tanda tangan: sediakan ruang untuk ttd basah bila dicetak
+    sigY = currentY + 20;
   }
 
-  // Left Name & NIP
-  doc.setFont('helvetica', 'bold');
-  doc.text(`( ${namaPenanggungJawab} )`, leftX, sigY, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.text(
-    data.nipPenanggungJawab ? `NIP. ${data.nipPenanggungJawab}` : 'NIP. ........................................',
-    leftX,
-    sigY + 4,
-    { align: 'center' }
-  );
-
-  // Right Name & NIP
+  // Pelaksana Name & NIP
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.text(`( ${data.pelaksana} )`, rightX, sigY, { align: 'center' });

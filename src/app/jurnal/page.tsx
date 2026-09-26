@@ -109,9 +109,6 @@ export default function JurnalPage() {
   const [selectedRencanaId, setSelectedRencanaId] = useState('');
   const [pelaksana, setPelaksana] = useState('');
   const [nipPelaksana, setNipPelaksana] = useState('');
-  const [penanggungJawab, setPenanggungJawab] = useState('');
-  const [nipPenanggungJawab, setNipPenanggungJawab] = useState('');
-  const [jabatanPenanggungJawab, setJabatanPenanggungJawab] = useState('Ketua Tim Kerja');
   const [tandaTangan, setTandaTangan] = useState<string | null>(null);
   const ttdInputRef = useRef<HTMLInputElement>(null);
 
@@ -369,9 +366,6 @@ export default function JurnalPage() {
       rencanaKinerja: getSelectedRencanaName(),
       pelaksana: pelaksana || 'Pegawai BPS',
       nipPelaksana: nipPelaksana || undefined,
-      penanggungJawab: penanggungJawab || undefined,
-      nipPenanggungJawab: nipPenanggungJawab || undefined,
-      jabatanPenanggungJawab: jabatanPenanggungJawab || 'Ketua Tim Kerja',
       ringkasan: ringkasan || rawText || 'Kegiatan kedinasan telah terlaksana.',
       latarBelakang: latarBelakang || undefined,
       uraianKegiatan:
@@ -1058,35 +1052,6 @@ export default function JurnalPage() {
                   </div>
                 </div>
 
-                {/* Penanggung Jawab / Ketua Tim */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.75rem' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.3rem', color: 'var(--text-muted)' }}>
-                      Penanggung Jawab (Mengetahui)
-                    </label>
-                    <input
-                      type="text"
-                      className="input-base"
-                      value={penanggungJawab}
-                      onChange={(e) => setPenanggungJawab(e.target.value)}
-                      placeholder="Nama Ketua Tim / Atasan"
-                      style={{ fontSize: '0.85rem' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.3rem', color: 'var(--text-muted)' }}>
-                      NIP Penanggung Jawab
-                    </label>
-                    <input
-                      type="text"
-                      className="input-base"
-                      value={nipPenanggungJawab}
-                      onChange={(e) => setNipPenanggungJawab(e.target.value)}
-                      placeholder="198..."
-                      style={{ fontSize: '0.85rem' }}
-                    />
-                  </div>
-                </div>
 
                 {/* Tanda Tangan Pelaksana (Opsional) */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.85rem', marginTop: '0.25rem' }}>
@@ -1688,42 +1653,25 @@ export default function JurnalPage() {
               </div>
             )}
 
-            {/* 10. LEMBAR PENGESAHAN & TANDA TANGAN */}
-            <div style={{ marginTop: '2.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', textAlign: 'center' }}>
-              <div>
-                <div style={{ fontSize: '13px', color: '#334155' }}>Mengetahui,</div>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', marginBottom: '55px' }}>
-                  {jabatanPenanggungJawab || 'Ketua Tim Kerja'}
-                </div>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
-                  ( {penanggungJawab || 'Ketua Tim Kerja'} )
-                </div>
-                <div style={{ fontSize: '12px', color: '#64748b' }}>
-                  {nipPenanggungJawab ? `NIP. ${nipPenanggungJawab}` : 'NIP. ........................................'}
-                </div>
-              </div>
-
-              <div>
+            {/* 10. LEMBAR PENGESAHAN & TANDA TANGAN (Hanya Pelaksana Kegiatan) */}
+            <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'flex-end', textAlign: 'center' }}>
+              <div style={{ minWidth: '220px' }}>
                 <div style={{ fontSize: '13px', color: '#334155' }}>
                   {tempat?.split('/')[0]?.trim() || 'Tempat Tugas'}, {formatDateIndo(tanggal)}
                 </div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', marginBottom: tandaTangan ? '6px' : '14px' }}>
+                  Pelaksana Kegiatan,
+                </div>
                 {tandaTangan ? (
-                  <>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', marginBottom: '6px' }}>
-                      Pelaksana Kegiatan,
-                    </div>
-                    <div style={{ height: '46px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '4px' }}>
-                      <img
-                        src={tandaTangan}
-                        alt="Tanda Tangan Pelaksana"
-                        style={{ maxHeight: '46px', maxWidth: '120px', objectFit: 'contain' }}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', marginBottom: '14px' }}>
-                    Pelaksana Kegiatan,
+                  <div style={{ height: '46px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '6px' }}>
+                    <img
+                      src={tandaTangan}
+                      alt="Tanda Tangan Pelaksana"
+                      style={{ maxHeight: '46px', maxWidth: '120px', objectFit: 'contain' }}
+                    />
                   </div>
+                ) : (
+                  <div style={{ height: '40px' }} />
                 )}
                 <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
                   ( {pelaksana || 'Pegawai BPS'} )
