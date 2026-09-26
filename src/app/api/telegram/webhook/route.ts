@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { users, masterRencana, timKerja, laporan, telegramUpdates } from '@/db/schema';
+import { users, masterRencana, timKerja, laporan, telegramUpdates, userSettings } from '@/db/schema';
 import { eq, and, gt } from 'drizzle-orm';
 import { getBpsReportSystemPrompt, getBpsImageSystemPrompt, polishDailyDossier } from '@/lib/ai';
 import { generateDailyDossierPdf } from '@/lib/daily-dossier-pdf';
@@ -810,11 +810,90 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
     const docxBuf = await generateDailyDossierDocx(payload);
     const docxFilename = `${safeTitle}_${targetDate}.docx`;
 
+    // Upload DOCX to Google Drive if configured
+    let docxDriveLink: string | null = null;
+    try {
+      const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientForUser, buildEvidenceFileName } = await import('@/lib/drive');
+      const [settings] = await db
+        .select()
+        .from(userSettings)
+        .where(eq(userSettings.userId, user.id as any))
+        .limit(1);
+
+      let drive = null;
+      try {
+        drive = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+          ? getDriveClientFromServiceAccount()
+          : await getDriveClientForUser(user.id);
+      } catch {}
+
+      if (drive) {
+        const base = buildEvidenceFileName(
+          user.name || 'Pegawai_BPS',
+          targetDate,
+          activeRk?.kode || 'RK',
+          payload.judul || 'Jurnal_Harian'
+        );
+        const fileName = `${base}.docx`;
+        const uploadResult = await uploadToDrive(
+          docxBuf,
+          fileName,
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          settings?.driveFolderId || '',
+          drive
+        );
+        if (uploadResult?.link) {
+          docxDriveLink = uploadResult.link;
+        }
+      }
+    } catch (driveErr) {
+      console.warn('Drive upload error for telegram jurnal docx:', driveErr);
+    }
+
+    // Save to Laporan DB
+    let targetRk: any = activeRk;
+    if (!targetRk) {
+      const rkList = await getUserRencana(user.id);
+      if (rkList.length > 0) targetRk = rkList[0];
+    }
+
+    if (targetRk) {
+      try {
+        const buktiArr: string[] = [];
+        if (docxDriveLink) buktiArr.push(docxDriveLink);
+        for (const p of photos) {
+          if (p.dataUrl && p.dataUrl.startsWith('http') && !buktiArr.includes(p.dataUrl)) {
+            buktiArr.push(p.dataUrl);
+          }
+        }
+
+        await db.insert(laporan).values({
+          userId: user.id,
+          tanggalMulai: targetDate,
+          tanggalSelesai: targetDate,
+          jamMulai: '08:00',
+          jamSelesai: '16:00',
+          rencanaId: targetRk.id,
+          kegiatan: payload.judul || `Jurnal Kegiatan ${formatDateIndo(targetDate)}`,
+          progress: 100,
+          capaian: payload.capaianOutput?.join('; ') || payload.ringkasan || 'Jurnal harian terselesaikan',
+          buktiUrls: buktiArr.length > 0 ? JSON.stringify(buktiArr) : null,
+          masukanSkp: payload.ringkasan || null,
+        });
+      } catch (dbErr) {
+        console.warn('DB insert error for telegram jurnal:', dbErr);
+      }
+    }
+
+    const docxCaption = docxDriveLink
+      ? `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.\n\n☁️ *Tersimpan di Google Drive & Menu Laporan:*\n🔗 [Buka Word di Google Drive](${docxDriveLink})\n📊 Tercatat di web: https://keep-note-ai.vercel.app/laporan`
+      : `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.\n\n📊 Tercatat di web: https://keep-note-ai.vercel.app/laporan`;
+
     await sendTgDocument(
       chatId,
       docxBuf,
       docxFilename,
-      `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.`
+      docxCaption
     );
   } catch (err: any) {
     console.error('Error generating jurnal in Telegram:', err);

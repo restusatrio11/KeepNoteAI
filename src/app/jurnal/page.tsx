@@ -133,6 +133,7 @@ export default function JurnalPage() {
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isSavingDb, setIsSavingDb] = useState(false);
+  const [lastSavedDriveUrl, setLastSavedDriveUrl] = useState<string | null>(null);
 
   // Initialize user name
   useEffect(() => {
@@ -422,36 +423,40 @@ export default function JurnalPage() {
     }
   };
 
-  // Save to Laporan DB
+  // Save to Laporan DB & Upload DOCX to Drive
   const handleSaveToDb = async () => {
     if (!selectedRencanaId) {
       showToast('Pilih Program / Rencana Kinerja terlebih dahulu', 'error');
       return;
     }
+    if (!tanggal || !pelaksana) {
+      showToast('Tanggal dan nama pelaksana wajib diisi', 'error');
+      return;
+    }
 
     setIsSavingDb(true);
     try {
-      const res = await fetch('/api/laporan', {
+      const payload = getPayload();
+      const res = await fetch('/api/laporan/save-jurnal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tanggalMulai: tanggal,
-          tanggalSelesai: tanggal,
-          jamMulai: waktu.split('-')[0]?.trim() || '08:00',
-          jamSelesai: waktu.split('-')[1]?.trim() || '16:00',
+          dossier: payload,
           rencanaId: selectedRencanaId,
-          kegiatan: judul || (uraianKegiatan[0] ?? rawText),
-          progress: 100,
-          capaian: capaianOutput.join('; ') || ringkasan || 'Kegiatan selesai 100%',
-          masukanSkp: ringkasan || null,
+          waktu,
         }),
       });
 
+      const data = await res.json();
       if (!res.ok) {
-        throw new Error('Gagal menyimpan laporan ke histori database');
+        throw new Error(data.error || 'Gagal menyimpan laporan ke histori database');
       }
 
-      showToast('Laporan berhasil disimpan ke Histori Pelaporan!', 'success');
+      if (data.docxDriveLink) {
+        setLastSavedDriveUrl(data.docxDriveLink);
+      }
+
+      showToast(data.message || 'Laporan berhasil disimpan ke Menu Laporan!', 'success');
     } catch (err: any) {
       showToast(err.message || 'Gagal menyimpan', 'error');
     } finally {
@@ -551,6 +556,20 @@ export default function JurnalPage() {
           </div>
 
           <button
+            onClick={handleSaveToDb}
+            disabled={isSavingDb}
+            className="btn btn-primary"
+            style={{
+              width: 'auto',
+              background: 'linear-gradient(135deg, #059669, #10b981)',
+              borderColor: '#059669',
+            }}
+          >
+            {isSavingDb ? <Loader2 size={16} className="spin" /> : <UploadCloud size={16} />}
+            <span>Simpan ke Laporan & Drive</span>
+          </button>
+
+          <button
             onClick={() => handleDownload('docx')}
             disabled={isExportingDocx}
             className="btn glass"
@@ -568,7 +587,7 @@ export default function JurnalPage() {
           <button
             onClick={() => handleDownload('pdf')}
             disabled={isExportingPdf}
-            className="btn btn-primary"
+            className="btn glass"
             style={{ width: 'auto' }}
           >
             {isExportingPdf ? <Loader2 size={16} className="spin" /> : <Download size={16} />}
@@ -1318,34 +1337,85 @@ export default function JurnalPage() {
               )}
             </div>
 
-            {/* Quick Save to Histori */}
+            {/* Quick Save to Histori & Google Drive */}
             <div
               style={{
                 display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '1rem 1.25rem',
+                flexDirection: 'column',
+                gap: '0.75rem',
+                padding: '1.1rem 1.25rem',
                 borderRadius: '14px',
                 background: 'rgba(255, 255, 255, 0.03)',
                 border: '1px solid var(--border)',
               }}
             >
-              <div>
-                <p style={{ fontWeight: 600, fontSize: '0.88rem' }}>Simpan ke Histori Pelaporan?</p>
-                <p className="text-muted" style={{ fontSize: '0.75rem' }}>
-                  Menyimpan ringkasan ini ke database akun Anda.
-                </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}>
+                <div>
+                  <p style={{ fontWeight: 600, fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <UploadCloud size={16} color="#10b981" />
+                    <span>Simpan ke Laporan & Upload Word ke Drive</span>
+                  </p>
+                  <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: '2px' }}>
+                    Otomatis generate file Word (.docx), upload ke Google Drive sebagai bukti kegiatan, dan catat ke riwayat Laporan.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSaveToDb}
+                  disabled={isSavingDb}
+                  className="btn btn-primary"
+                  style={{
+                    width: 'auto',
+                    padding: '0.55rem 1.1rem',
+                    fontSize: '0.82rem',
+                    background: 'linear-gradient(135deg, #059669, #10b981)',
+                    borderColor: '#059669',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {isSavingDb ? <Loader2 size={15} className="spin" /> : <Save size={15} />}
+                  <span>Simpan & Upload</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handleSaveToDb}
-                disabled={isSavingDb}
-                className="btn glass"
-                style={{ width: 'auto', padding: '0.5rem 1rem', fontSize: '0.82rem' }}
-              >
-                {isSavingDb ? <Loader2 size={15} className="spin" /> : <Save size={15} />}
-                <span>Simpan</span>
-              </button>
+
+              {lastSavedDriveUrl && (
+                <div
+                  style={{
+                    padding: '0.65rem 0.9rem',
+                    borderRadius: '8px',
+                    background: 'rgba(16, 185, 129, 0.1)',
+                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.5rem',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <CheckCircle2 size={16} color="#34d399" />
+                    <span style={{ fontSize: '0.8rem', color: '#6ee7b7' }}>File Word terunggah di Google Drive</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <a
+                      href={lastSavedDriveUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn glass"
+                      style={{ width: 'auto', padding: '0.2rem 0.6rem', fontSize: '0.75rem', color: '#a7f3d0' }}
+                    >
+                      Buka di Drive
+                    </a>
+                    <a
+                      href="/laporan"
+                      className="btn glass"
+                      style={{ width: 'auto', padding: '0.2rem 0.6rem', fontSize: '0.75rem' }}
+                    >
+                      Buka Laporan
+                    </a>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1375,7 +1445,23 @@ export default function JurnalPage() {
               </span>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button
+                onClick={handleSaveToDb}
+                disabled={isSavingDb}
+                className="btn btn-primary"
+                style={{
+                  width: 'auto',
+                  padding: '0.55rem 1.1rem',
+                  fontSize: '0.85rem',
+                  background: 'linear-gradient(135deg, #059669, #10b981)',
+                  borderColor: '#059669',
+                }}
+              >
+                {isSavingDb ? <Loader2 size={15} className="spin" /> : <UploadCloud size={15} />}
+                <span>Simpan ke Laporan & Drive</span>
+              </button>
+
               <button
                 onClick={() => handleDownload('docx')}
                 disabled={isExportingDocx}
@@ -1395,7 +1481,7 @@ export default function JurnalPage() {
               <button
                 onClick={() => handleDownload('pdf')}
                 disabled={isExportingPdf}
-                className="btn btn-primary"
+                className="btn glass"
                 style={{ width: 'auto', padding: '0.55rem 1.1rem', fontSize: '0.85rem' }}
               >
                 {isExportingPdf ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
