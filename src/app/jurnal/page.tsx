@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   FileText,
@@ -182,6 +182,13 @@ export default function JurnalPage() {
     const found = rencanaOptions.find((r) => r.id === selectedRencanaId);
     return found ? found.nama : 'Pelaksanaan Tugas Kedinasan BPS';
   };
+
+  const filteredRencanaOptions = useMemo(() => {
+    if (!selectedTimId) return rencanaOptions;
+    const filtered = rencanaOptions.filter((r) => r.timId === selectedTimId);
+    return filtered.length > 0 ? filtered : rencanaOptions;
+  }, [rencanaOptions, selectedTimId]);
+
 
   // Polish with AI
   const handlePolishWithAI = async () => {
@@ -986,19 +993,20 @@ export default function JurnalPage() {
                   <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.3rem', color: 'var(--text-muted)' }}>
                     Tim Kerja
                   </label>
-                  <select
-                    className="input-base"
+                  <SearchableSelect
+                    options={timOptions}
                     value={selectedTimId}
-                    onChange={(e) => setSelectedTimId(e.target.value)}
-                    style={{ fontSize: '0.85rem' }}
-                  >
-                    {timOptions.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.nama}
-                      </option>
-                    ))}
-                    {timOptions.length === 0 && <option value="">Default BPS</option>}
-                  </select>
+                    onChange={(val) => {
+                      setSelectedTimId(val);
+                      if (val) {
+                        const inTeam = rencanaOptions.filter((r) => r.timId === val);
+                        if (inTeam.length > 0 && !inTeam.some((r) => r.id === selectedRencanaId)) {
+                          setSelectedRencanaId(inTeam[0].id);
+                        }
+                      }
+                    }}
+                    placeholder="Cari & pilih Tim Kerja BPS..."
+                  />
                 </div>
 
                 {/* Rencana Kinerja (SKP) */}
@@ -1006,19 +1014,18 @@ export default function JurnalPage() {
                   <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.3rem', color: 'var(--text-muted)' }}>
                     Rencana Kinerja (Program / SKP)
                   </label>
-                  <select
-                    className="input-base"
+                  <SearchableSelect
+                    options={filteredRencanaOptions}
                     value={selectedRencanaId}
-                    onChange={(e) => setSelectedRencanaId(e.target.value)}
-                    style={{ fontSize: '0.85rem' }}
-                  >
-                    {rencanaOptions.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.nama}
-                      </option>
-                    ))}
-                    {rencanaOptions.length === 0 && <option value="">Tugas Kedinasan BPS</option>}
-                  </select>
+                    onChange={(val) => {
+                      setSelectedRencanaId(val);
+                      const matchRk = rencanaOptions.find((r) => r.id === val);
+                      if (matchRk?.timId && (!selectedTimId || selectedTimId !== matchRk.timId)) {
+                        setSelectedTimId(matchRk.timId);
+                      }
+                    }}
+                    placeholder="Cari kode atau nama Rencana Kinerja..."
+                  />
                 </div>
 
                 {/* Pelaksana & NIP */}
