@@ -98,36 +98,82 @@ function normBukti(v) {
   return parts.length ? JSON.stringify(parts) : null;
 }
 
-// --- Pencocokan rencana (Kode RK persis, lalu nama mirip) ---
+function extractCellValue(val) {
+  if (val == null) return null;
+  if (val instanceof Date) return val;
+  if (typeof val === 'object') {
+    if (val.result !== undefined && val.result !== null) {
+      if (val.result instanceof Date) return val.result;
+      return typeof val.result === 'object' ? extractCellValue(val.result) : String(val.result).trim();
+    }
+    if (Array.isArray(val.richText)) {
+      return val.richText.map((t) => t.text || '').join('').trim();
+    }
+    if (val.text !== undefined && val.text !== null) {
+      return String(val.text).trim();
+    }
+    if (val.formula) {
+      return '';
+    }
+  }
+  return typeof val === 'string' ? val.trim() : val;
+}
+
+// --- Pencocokan rencana (Kode RK persis, dropdown nama, atau fuzzy) ---
 
 function matchRencana(kode, nama, rencanaRows) {
   const k = String(kode || '').trim().toLowerCase();
-  const n = String(nama || '').trim().toLowerCase();
+  let n = String(nama || '').trim();
   if (!k && !n) return null;
-  if (k) {
+
+  // 1. Jika nama berisi format "[RK01] ..." atau "Nama RK (RK01)", ekstrak kodenya
+  let inferredKode = null;
+  const bracketMatch = n.match(/^\[([^\]]+)\]\s*(.*)$/);
+  if (bracketMatch) {
+    inferredKode = bracketMatch[1].trim().toLowerCase();
+    n = bracketMatch[2].trim();
+  } else {
+    const parenMatch = n.match(/^(.*?)\s*\(([^)]+)\)$/);
+    if (parenMatch) {
+      inferredKode = parenMatch[2].trim().toLowerCase();
+      n = parenMatch[1].trim();
+    }
+  }
+
+  // 2. Cocokkan berdasarkan Kode RK langsung atau hasil inferensi
+  const targetKode = k || inferredKode;
+  if (targetKode) {
     const byKode = rencanaRows.find(
-      (r) => String(r.kode || '').trim().toLowerCase() === k,
+      (r) => String(r.kode || '').trim().toLowerCase() === targetKode,
     );
     if (byKode) return byKode;
   }
+
+  // 3. Cocokkan berdasarkan nama
   if (n) {
+    const nLower = n.toLowerCase();
+    const exact = rencanaRows.find(
+      (r) => String(r.nama || '').trim().toLowerCase() === nLower,
+    );
+    if (exact) return exact;
+
     let best = null;
     let bestScore = 0;
     for (const r of rencanaRows) {
       const rn = String(r.nama || '').trim().toLowerCase();
       if (!rn) continue;
-      if (rn === n) return r;
       const score =
-        (rn.includes(n) || n.includes(rn))
-          ? Math.min(n.length, rn.length) / Math.max(n.length, rn.length)
+        rn.includes(nLower) || nLower.includes(rn)
+          ? Math.min(nLower.length, rn.length) / Math.max(nLower.length, rn.length)
           : 0;
       if (score > bestScore) {
         bestScore = score;
         best = r;
       }
     }
-    if (bestScore >= 0.6) return best;
+    if (bestScore >= 0.5) return best;
   }
+
   return null;
 }
 
@@ -141,19 +187,22 @@ async function buildTemplate(rencanaRows) {
   ws.columns = HEADERS.map((h, i) => ({
     header: h,
     key: h,
-    width: [14, 14, 10, 10, 10, 28, 42, 12, 36, 22, 40][i],
+    width: [14, 14, 11, 11, 14, 55, 45, 12, 36, 22, 40][i],
   }));
   ws.getRow(1).font = { bold: true };
   ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
   ws.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
+  const validRencana = (rencanaRows || []).filter((r) => r && (r.nama || r.kode));
+  const firstRK = validRencana[0];
 
   ws.addRow({
     'Tanggal Mulai': '2026-08-25',
     'Tanggal Selesai': '2026-08-25',
     'Jam Mulai': '08:00',
     'Jam Selesai': '16:00',
-    'Kode RK': (rencanaRows[0] && rencanaRows[0].kode) || 'RK01',
-    'Rencana Kinerja': (rencanaRows[0] && rencanaRows[0].nama) || 'Contoh Rencana Kinerja',
+    'Kode RK': (firstRK && firstRK.kode) || 'RK01',
+    'Rencana Kinerja': (firstRK && firstRK.nama) || 'Contoh Rencana Kinerja',
     Kegiatan: 'CONTOH — hapus baris ini sebelum import',
     'Progress (%)': 100,
     Capaian: 'Contoh capaian kegiatan (wajib diisi)',
@@ -161,27 +210,55 @@ async function buildTemplate(rencanaRows) {
     'Bukti Dukung': 'https://contoh.link/bukti.pdf',
   });
 
-  // Sheet referensi: daftar Rencana Kinerja milik user (kode + nama)
+  // Sheet referensi: daftar Rencana Kinerja milik user (nama + kode)
   const ref = wb.addWorksheet('Referensi RK');
   ref.columns = [
-    { header: 'Kode RK', key: 'kode', width: 12 },
-    { header: 'Rencana Kinerja', key: 'nama', width: 60 },
+    { header: 'Rencana Kinerja', key: 'nama', width: 65 },
+    { header: 'Kode RK', key: 'kode', width: 14 },
   ];
   ref.getRow(1).font = { bold: true };
-  for (const r of rencanaRows || []) ref.addRow({ kode: r.kode, nama: r.nama });
-  ref.getColumn('nama').alignment = { wrapText: true, vertical: 'top' };
+  ref.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
 
-  // Data validation kolom Kode RK dari sheet Referensi
-  if ((rencanaRows || []).length) {
-    const last = Math.min(200, rencanaRows.length + 1);
+  const nameCount = {};
+  for (const r of validRencana) {
+    const n = String(r.nama || '').trim();
+    nameCount[n] = (nameCount[n] || 0) + 1;
+  }
+
+  for (const r of validRencana) {
+    const rawNama = String(r.nama || '').trim();
+    const kode = String(r.kode || '').trim();
+    const namaDisplay = nameCount[rawNama] > 1 && kode ? `${rawNama} (${kode})` : (rawNama || kode);
+    ref.addRow({ nama: namaDisplay, kode });
+  }
+  ref.getColumn('nama').alignment = { wrapText: true, vertical: 'top' };
+  ref.getColumn('kode').alignment = { horizontal: 'center', vertical: 'top' };
+
+  // Data validation & auto-formula dari sheet Referensi
+  if (validRencana.length > 0) {
+    const last = validRencana.length + 1;
     for (let i = 2; i <= 500; i++) {
-      ws.getCell(`E${i}`).dataValidation = {
+      // Dropdown Rencana Kinerja pada kolom F
+      ws.getCell(`F${i}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [`='Referensi RK'!$A$2:$A$${last}`],
-        showErrorMessage: true,
-        errorTitle: 'Kode RK tidak dikenal',
-        error: 'Pilih Kode RK sesuai sheet Referensi RK.',
+        showErrorMessage: false,
+      };
+
+      // Auto-lookup Kode RK pada kolom E untuk baris 3 ke atas
+      if (i >= 3) {
+        ws.getCell(`E${i}`).value = {
+          formula: `IFERROR(VLOOKUP(F${i}, 'Referensi RK'!$A$2:$B$${last}, 2, FALSE), "")`,
+        };
+      }
+
+      // Dropdown alternatif pada kolom E (Kode RK) jika ingin memilih kode
+      ws.getCell(`E${i}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: [`='Referensi RK'!$B$2:$B$${last}`],
+        showErrorMessage: false,
       };
     }
   }
@@ -192,14 +269,19 @@ async function buildTemplate(rencanaRows) {
     'PETUNJUK IMPORT EXCEL KEGIATAN — KeepNoteAI Desktop',
     '',
     '1. Isi data mulai BARIS KE-3 pada sheet "Kegiatan" (baris 2 hanya contoh, hapus/ditimpa).',
-    '2. Kolom WAJIB: Tanggal Mulai, Kode RK, Kegiatan (min. 5 karakter), Capaian.',
-    '   Kolom lain boleh kosong (Progress kosong = 100%).',
-    '3. Format tanggal: YYYY-MM-DD atau DD/MM/YYYY. Format jam: HH:MM (contoh 08:00).',
-    '4. Kode RK harus sesuai sheet "Referensi RK" (Rencana Kinerja milik Anda di website).',
-    '   Jika belum ada, jalankan "Sync Program & Tim Kerja dari Portal" di Pengaturan.',
-    '5. Bukti Dukung: satu atau beberapa URL, pisahkan dengan enter/koma.',
-    '6. Setelah selesai, simpan file (.xlsx) lalu klik "Import Excel" di aplikasi desktop.',
-    '7. Data yang valid akan masuk ke database (muncul juga di website), lalu bisa di-sync ke portal e-Kinerja.',
+    '2. Kolom WAJIB: Tanggal Mulai, Rencana Kinerja (atau Kode RK), Kegiatan (min. 5 karakter), Capaian.',
+    '   Kolom lain opsional (Progress kosong = 100%).',
+    '3. CARA MEMILIH RENCANA KINERJA:',
+    '   - Klik sel pada Kolom F (Rencana Kinerja), klik tanda panah dropdown, lalu pilih kegiatan Anda.',
+    '   - Kolom E (Kode RK) akan terisi otomatis dengan rumus Excel.',
+    '   - Anda juga dapat langsung memilih atau mengetik Kode RK di Kolom E jika diinginkan.',
+    '4. Sheet "Referensi RK" berisi daftar Rencana Kinerja aktif milik akun Anda.',
+    '   Jika daftar kosong atau belum update, buka aplikasi desktop lalu jalankan',
+    '   "Sync Program & Tim Kerja dari Portal" di menu Pengaturan.',
+    '5. Format tanggal: YYYY-MM-DD atau DD/MM/YYYY. Format jam: HH:MM (contoh: 08:00).',
+    '6. Bukti Dukung: satu atau beberapa URL link Google Drive/website, pisahkan dengan enter atau koma.',
+    '7. Setelah selesai mengisi, simpan file (.xlsx) lalu klik tombol "Import Excel" di aplikasi desktop.',
+    '8. Data yang berhasil diimpor akan tersimpan di database lokal & website, serta siap di-sync ke portal e-Kinerja.',
   ];
   lines.forEach((t, i) => {
     tips.getCell(`A${i + 1}`).value = t;
@@ -242,7 +324,8 @@ async function parseWorkbook(buffer, rencanaRows) {
 
   const get = (row, name) => {
     const c = cols[normHeader(name)];
-    return c ? row.getCell(c).value : null;
+    if (!c) return null;
+    return extractCellValue(row.getCell(c).value);
   };
 
   const rows = [];
@@ -281,8 +364,9 @@ async function parseWorkbook(buffer, rencanaRows) {
     const capaian = String(get(row, 'Capaian') || '').trim() || kegiatan;
     const rk = matchRencana(get(row, 'Kode RK'), get(row, 'Rencana Kinerja'), rencanaRows || []);
     if (!rk) {
+      const inputVal = get(row, 'Rencana Kinerja') || get(row, 'Kode RK') || '-';
       errors.push(
-        `${no}: Rencana Kinerja tidak cocok (Kode RK "${get(row, 'Kode RK') || '-'}"). Lihat sheet Referensi RK.`,
+        `${no}: Rencana Kinerja "${inputVal}" tidak ditemukan. Silakan pilih dari dropdown atau lihat sheet Referensi RK.`,
       );
       continue;
     }
