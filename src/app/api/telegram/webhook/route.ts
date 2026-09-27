@@ -15,12 +15,26 @@ function extractUrls(text: string): string[] {
   return (text.match(URL_REGEX) || []).map((u) => u.replace(/[)\]]+$/, ''));
 }
 
-function sendMsg(chatId: string | number, text: string, extra?: any) {
-  return fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'Markdown', ...extra }),
-  });
+async function sendMsg(chatId: string | number, text: string, extra?: any) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: String(chatId), text, parse_mode: 'Markdown', ...extra }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok && data.description?.toLowerCase().includes('parse')) {
+      // Fallback without parse_mode if markdown has formatting collision
+      return fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: String(chatId), text: text.replace(/[*_`]/g, ''), ...extra }),
+      });
+    }
+    return res;
+  } catch (e) {
+    console.error('sendMsg error:', e);
+  }
 }
 
 function tgFetch(method: string, body: any) {
@@ -37,12 +51,25 @@ function answerCallbackQuery(callbackQueryId: string, text?: string) {
   });
 }
 
-function editMsgText(chatId: string | number, messageId: string | number, text: string, extra?: any) {
-  return fetch(`https://api.telegram.org/bot${TG_TOKEN}/editMessageText`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: String(chatId), message_id: Number(messageId), text, parse_mode: 'Markdown', ...extra }),
-  });
+async function editMsgText(chatId: string | number, messageId: string | number, text: string, extra?: any) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: String(chatId), message_id: Number(messageId), text, parse_mode: 'Markdown', ...extra }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!data.ok && data.description?.toLowerCase().includes('parse')) {
+      return fetch(`https://api.telegram.org/bot${TG_TOKEN}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: String(chatId), message_id: Number(messageId), text: text.replace(/[*_`]/g, ''), ...extra }),
+      });
+    }
+    return res;
+  } catch (e) {
+    console.error('editMsgText error:', e);
+  }
 }
 
 async function sendTgDocument(chatId: string | number, fileBuffer: Uint8Array | Buffer, filename: string, caption?: string) {
@@ -96,6 +123,138 @@ async function getUserRencana(userId: string) {
     .leftJoin(timKerja, eq(masterRencana.timId, timKerja.id))
     .where(eq(masterRencana.userId, userId as any))
     .orderBy(masterRencana.kode);
+}
+
+async function getUserTim(userId: string) {
+  return db
+    .select({
+      id: timKerja.id,
+      nama: timKerja.nama,
+    })
+    .from(timKerja)
+    .where(eq(timKerja.userId, userId as any))
+    .orderBy(timKerja.nama);
+}
+
+function buildRkListView({
+  list,
+  activeRkId,
+  page = 1,
+  pageSize = 5,
+  timFilter = 'all',
+  timList = [],
+}: {
+  list: any[];
+  activeRkId?: string | null;
+  page?: number;
+  pageSize?: number;
+  timFilter?: string;
+  timList?: any[];
+}) {
+  let filteredList = list;
+  let activeTimNama = '';
+
+  if (timFilter && timFilter !== 'all') {
+    filteredList = list.filter((r) => r.timId === timFilter);
+    const t = timList.find((tm) => tm.id === timFilter);
+    if (t) activeTimNama = t.nama;
+  }
+
+  const totalItems = filteredList.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalItems);
+  const currentItems = filteredList.slice(startIndex, endIndex);
+
+  let msg = '';
+  if (activeTimNama) {
+    msg += `📋 *Daftar RK — Tim ${activeTimNama}*\n`;
+  } else {
+    msg += `📋 *Daftar Rencana Kerja BPS*\n`;
+  }
+
+  msg += `_Menampilkan ${totalItems === 0 ? 0 : startIndex + 1} - ${endIndex} dari total ${totalItems} RK (Hal ${currentPage}/${totalPages})_\n\n`;
+
+  if (currentItems.length === 0) {
+    msg += `_Tidak ada Rencana Kerja yang ditemukan untuk filter ini._\n\n`;
+  } else {
+    currentItems.forEach((r, idx) => {
+      const globalNumber = startIndex + idx + 1;
+      const isActive = activeRkId && r.id === activeRkId;
+      const activeBadge = isActive ? ' ⭐ *(AKTIF)*' : '';
+      const cleanNama = (r.nama || '').replace(/\*/g, '');
+      const cleanTim = (r.timNama || 'BPS').replace(/_/g, ' ');
+
+      msg += `*${globalNumber}.* *${cleanNama}*${activeBadge}\n`;
+      msg += `     🏷️ \`${r.kode}\``;
+      if (!activeTimNama) {
+        msg += ` • 👥 _${cleanTim}_`;
+      }
+      msg += `\n\n`;
+    });
+  }
+
+  msg += `👉 *Sentuh nomor tombol di bawah untuk memilih RK:*`;
+
+  // Numbered buttons grid (up to 3 per row for large touch targets)
+  const inlineKeyboard: any[] = [];
+  let row: any[] = [];
+
+  currentItems.forEach((r, idx) => {
+    const globalNumber = startIndex + idx + 1;
+    const isActive = activeRkId && r.id === activeRkId;
+    const btnLabel = isActive ? `✅ ${globalNumber}` : `🔘 ${globalNumber}`;
+
+    row.push({
+      text: btnLabel,
+      callback_data: `setrk:${r.id}`,
+    });
+
+    if (row.length === 3) {
+      inlineKeyboard.push(row);
+      row = [];
+    }
+  });
+
+  if (row.length > 0) {
+    inlineKeyboard.push(row);
+  }
+
+  // Navigation Row (if multiple pages)
+  const navRow: any[] = [];
+  if (currentPage > 1) {
+    navRow.push({
+      text: `⬅️ Hal ${currentPage - 1}`,
+      callback_data: `rkpage:${currentPage - 1}:${timFilter}`,
+    });
+  }
+  if (currentPage < totalPages) {
+    navRow.push({
+      text: `Hal ${currentPage + 1} ➡️`,
+      callback_data: `rkpage:${currentPage + 1}:${timFilter}`,
+    });
+  }
+  if (navRow.length > 0) {
+    inlineKeyboard.push(navRow);
+  }
+
+  // Filter & Action Buttons
+  const actionRow: any[] = [];
+  if (timList.length > 1) {
+    actionRow.push({
+      text: timFilter !== 'all' ? '🌐 Semua Tim' : '👥 Filter Tim',
+      callback_data: timFilter !== 'all' ? `rkpage:1:all` : 'rktim:menu',
+    });
+  }
+  actionRow.push({
+    text: !activeRkId ? '🤖 Auto AI (Aktif)' : '🤖 Deteksi Otomatis AI',
+    callback_data: 'setrk:auto',
+  });
+  inlineKeyboard.push(actionRow);
+
+  return { text: msg, reply_markup: { inline_keyboard: inlineKeyboard } };
 }
 
 function findBestRencana(rencanaList: any[], hint: string) {
@@ -218,6 +377,72 @@ export async function POST(req: NextRequest) {
         }
       } else {
         await answerCallbackQuery(cb.id, 'RK tidak ditemukan.');
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    if (data.startsWith('rkpage:')) {
+      const parts = data.split(':');
+      const targetPage = parseInt(parts[1]) || 1;
+      const timFilter = parts[2] || 'all';
+
+      const list = await getUserRencana(cbUser.id);
+      const timList = await getUserTim(cbUser.id);
+
+      const view = buildRkListView({
+        list,
+        activeRkId: cbUser.selectedRencanaId,
+        page: targetPage,
+        pageSize: 5,
+        timFilter,
+        timList,
+      });
+
+      await answerCallbackQuery(cb.id);
+      if (cbMsgId) {
+        await editMsgText(cbChatId, cbMsgId, view.text, { reply_markup: view.reply_markup });
+      } else {
+        await sendMsg(cbChatId, view.text, { reply_markup: view.reply_markup });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    if (data === 'rktim:menu') {
+      const list = await getUserRencana(cbUser.id);
+      const timList = await getUserTim(cbUser.id);
+
+      let msg = `👥 *Pilih Tim Kerja untuk Menyaring RK:*\n\n` +
+        `Silakan sentuh nama tim di bawah untuk menampilkan hanya RK dari tim tersebut:`;
+
+      const timButtons: any[] = [];
+      timList.forEach((tm: any) => {
+        const count = list.filter((r) => r.timId === tm.id).length;
+        timButtons.push([
+          {
+            text: `📁 ${tm.nama} (${count} RK)`,
+            callback_data: `rkpage:1:${tm.id}`,
+          },
+        ]);
+      });
+
+      timButtons.push([
+        {
+          text: `🌐 Semua Tim (${list.length} RK)`,
+          callback_data: `rkpage:1:all`,
+        },
+      ]);
+      timButtons.push([
+        {
+          text: `⬅️ Kembali ke Daftar RK`,
+          callback_data: `rkpage:1:all`,
+        },
+      ]);
+
+      await answerCallbackQuery(cb.id);
+      if (cbMsgId) {
+        await editMsgText(cbChatId, cbMsgId, msg, { reply_markup: { inline_keyboard: timButtons } });
+      } else {
+        await sendMsg(cbChatId, msg, { reply_markup: { inline_keyboard: timButtons } });
       }
       return NextResponse.json({ ok: true });
     }
@@ -358,18 +583,31 @@ export async function POST(req: NextRequest) {
           if (candidates.length === 1) {
             matched = candidates[0];
           } else if (candidates.length > 1) {
-            const inlineKeyboard = candidates.map((r: any) => {
-              const label = `${r.kode} - ${r.nama}`;
-              const truncatedLabel = label.length > 36 ? label.slice(0, 33) + '...' : label;
-              return [{ text: truncatedLabel, callback_data: `setrk:${r.id}` }];
-            });
+            let candidatesMsg = `🔍 *Ditemukan ${candidates.length} RK untuk kata kunci "${param}":*\n\n`;
+            const buttons: any[] = [];
+            let rRow: any[] = [];
 
-            await sendMsg(
-              chatId,
-              `🔍 Ditemukan *${candidates.length}* RK untuk kata kunci "*${param}*".\n` +
-              `Silakan sentuh tombol di bawah untuk memilih:`,
-              { reply_markup: { inline_keyboard: inlineKeyboard } }
-            );
+            candidates.forEach((r: any, idx: number) => {
+              const num = idx + 1;
+              const cleanNama = (r.nama || '').replace(/\*/g, '');
+              const cleanTim = (r.timNama || 'BPS').replace(/_/g, ' ');
+              candidatesMsg += `*${num}.* *${cleanNama}*\n     🏷️ \`${r.kode}\` • 👥 _${cleanTim}_\n\n`;
+              rRow.push({
+                text: `🔘 ${num}`,
+                callback_data: `setrk:${r.id}`,
+              });
+              if (rRow.length === 3) {
+                buttons.push(rRow);
+                rRow = [];
+              }
+            });
+            if (rRow.length > 0) buttons.push(rRow);
+
+            candidatesMsg += `👉 *Sentuh nomor tombol di bawah untuk memilih:*`;
+
+            await sendMsg(chatId, candidatesMsg, {
+              reply_markup: { inline_keyboard: buttons },
+            });
             return NextResponse.json({ ok: true });
           }
         }
@@ -378,7 +616,7 @@ export async function POST(req: NextRequest) {
           await sendMsg(
             chatId,
             `❌ Tidak ditemukan RK yang cocok dengan "*${param}*".\n\n` +
-            `Ketik \`/rk\` untuk melihat daftar dan memilih dengan satu sentuhan tombol.`
+            `Ketik \`/rk\` untuk melihat daftar lengkap dengan teks utuh & tombol nomor.`
           );
           return NextResponse.json({ ok: true });
         }
@@ -399,45 +637,19 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // No param: Show interactive buttons and number list
-      const activeRk = user.selectedRencanaId
-        ? list.find((r: any) => r.id === user.selectedRencanaId)
-        : null;
-
-      let msg = `📋 *Pilih Target Rencana Kerja (${list.length})*\n\n`;
-      if (activeRk) {
-        msg += `🎯 *RK Aktif Saat Ini:*\n👉 *${activeRk.nama}*\n🏷️ \`${activeRk.kode}\`\n\n`;
-      } else {
-        msg += `🤖 *Status:* Deteksi Otomatis AI (berdasarkan isi kegiatan)\n\n`;
-      }
-
-      msg += `Silakan sentuh tombol di bawah untuk memilih secara instan:\n`;
-
-      const inlineKeyboard: any[] = [];
-      list.forEach((r: any, idx: number) => {
-        const isActive = activeRk && r.id === activeRk.id;
-        const icon = isActive ? '✅ ' : `${idx + 1}. `;
-        const label = `${icon}${r.nama}`;
-        const truncatedLabel = label.length > 36 ? label.slice(0, 33) + '...' : label;
-        inlineKeyboard.push([
-          {
-            text: truncatedLabel,
-            callback_data: `setrk:${r.id}`,
-          },
-        ]);
+      // No param: Show full paginated list with numbered keypad buttons
+      const timList = await getUserTim(user.id);
+      const view = buildRkListView({
+        list,
+        activeRkId: user.selectedRencanaId,
+        page: 1,
+        pageSize: 5,
+        timFilter: 'all',
+        timList,
       });
 
-      inlineKeyboard.push([
-        {
-          text: activeRk ? '🤖 Gunakan Deteksi Otomatis AI' : '✅ Deteksi Otomatis AI (Aktif)',
-          callback_data: 'setrk:auto',
-        },
-      ]);
-
-      msg += `\n_💡 Anda juga dapat mengetik nomor urutnya langsung: misal \`/rk 1\`, \`/rk 2\`, atau kata kunci seperti \`/rk sakernas\`._`;
-
-      await sendMsg(chatId, msg, {
-        reply_markup: { inline_keyboard: inlineKeyboard },
+      await sendMsg(chatId, view.text, {
+        reply_markup: view.reply_markup,
       });
       return NextResponse.json({ ok: true });
     }
