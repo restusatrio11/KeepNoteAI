@@ -187,7 +187,7 @@ async function buildTemplate(rencanaRows) {
   ws.columns = HEADERS.map((h, i) => ({
     header: h,
     key: h,
-    width: [14, 14, 11, 11, 14, 55, 45, 12, 36, 22, 40][i],
+    width: [14, 14, 11, 11, 14, 60, 45, 12, 36, 22, 40][i],
   }));
   ws.getRow(1).font = { bold: true };
   ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
@@ -196,70 +196,70 @@ async function buildTemplate(rencanaRows) {
   const validRencana = (rencanaRows || []).filter((r) => r && (r.nama || r.kode));
   const firstRK = validRencana[0];
 
+  // Sheet referensi tanpa spasi: 'Daftar_RK' agar formula dropdown & VLOOKUP 100% kompatibel di semua spreadsheet (Excel, WPS, Sheets, LibreOffice)
+  const ref = wb.addWorksheet('Daftar_RK');
+  ref.columns = [
+    { header: 'Pilihan Rencana Kinerja (Dropdown)', key: 'pilihan', width: 65 },
+    { header: 'Kode RK', key: 'kode', width: 14 },
+    { header: 'Nama Rencana Kinerja', key: 'nama', width: 60 },
+    { header: 'Indikator Kinerja Individu (IKI)', key: 'iki', width: 40 },
+  ];
+  ref.getRow(1).font = { bold: true };
+  ref.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+
+  for (const r of validRencana) {
+    const rawNama = String(r.nama || '').trim();
+    const kode = String(r.kode || '').trim();
+    const iki = String(r.iki || '').trim();
+    // Tampilan dropdown: "[Kode] Nama Rencana" jika ada kode, atau nama murni
+    const pilihan = kode && rawNama ? `[${kode}] ${rawNama}` : (rawNama || kode);
+    ref.addRow({ pilihan, kode, nama: rawNama, iki });
+  }
+  ref.getColumn('pilihan').alignment = { wrapText: true, vertical: 'top' };
+  ref.getColumn('kode').alignment = { horizontal: 'center', vertical: 'top' };
+  ref.getColumn('nama').alignment = { wrapText: true, vertical: 'top' };
+  ref.getColumn('iki').alignment = { wrapText: true, vertical: 'top' };
+
+  const samplePilihan = firstRK
+    ? (firstRK.kode && firstRK.nama ? `[${firstRK.kode}] ${firstRK.nama}` : (firstRK.nama || firstRK.kode))
+    : 'Contoh Rencana Kinerja';
+
+  // Baris contoh (baris 2)
   ws.addRow({
     'Tanggal Mulai': '2026-08-25',
     'Tanggal Selesai': '2026-08-25',
     'Jam Mulai': '08:00',
     'Jam Selesai': '16:00',
     'Kode RK': (firstRK && firstRK.kode) || 'RK01',
-    'Rencana Kinerja': (firstRK && firstRK.nama) || 'Contoh Rencana Kinerja',
-    Kegiatan: 'CONTOH — hapus baris ini sebelum import',
+    'Rencana Kinerja': samplePilihan,
+    Kegiatan: 'CONTOH — ganti / hapus baris ini sebelum import',
     'Progress (%)': 100,
-    Capaian: 'Contoh capaian kegiatan (wajib diisi)',
+    Capaian: 'Terwujudnya pelaksanaan kegiatan sesuai target.',
     'Masukan SKP': '',
     'Bukti Dukung': 'https://contoh.link/bukti.pdf',
   });
 
-  // Sheet referensi: daftar Rencana Kinerja milik user (nama + kode)
-  const ref = wb.addWorksheet('Referensi RK');
-  ref.columns = [
-    { header: 'Rencana Kinerja', key: 'nama', width: 65 },
-    { header: 'Kode RK', key: 'kode', width: 14 },
-  ];
-  ref.getRow(1).font = { bold: true };
-  ref.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
-
-  const nameCount = {};
-  for (const r of validRencana) {
-    const n = String(r.nama || '').trim();
-    nameCount[n] = (nameCount[n] || 0) + 1;
-  }
-
-  for (const r of validRencana) {
-    const rawNama = String(r.nama || '').trim();
-    const kode = String(r.kode || '').trim();
-    const namaDisplay = nameCount[rawNama] > 1 && kode ? `${rawNama} (${kode})` : (rawNama || kode);
-    ref.addRow({ nama: namaDisplay, kode });
-  }
-  ref.getColumn('nama').alignment = { wrapText: true, vertical: 'top' };
-  ref.getColumn('kode').alignment = { horizontal: 'center', vertical: 'top' };
-
-  // Data validation & auto-formula dari sheet Referensi
+  // Data validation & auto-formula dari sheet Daftar_RK
   if (validRencana.length > 0) {
     const last = validRencana.length + 1;
     for (let i = 2; i <= 500; i++) {
-      // Dropdown Rencana Kinerja pada kolom F
+      // Dropdown Select Rencana Kinerja pada kolom F
       ws.getCell(`F${i}`).dataValidation = {
         type: 'list',
         allowBlank: true,
-        formulae: [`='Referensi RK'!$A$2:$A$${last}`],
+        formulae: [`Daftar_RK!$A$2:$A$${last}`],
         showErrorMessage: false,
+        showInputMessage: true,
+        promptTitle: 'Pilih Rencana Kinerja',
+        prompt: 'Klik tanda panah dropdown untuk memilih program kerja.',
       };
 
       // Auto-lookup Kode RK pada kolom E untuk baris 3 ke atas
       if (i >= 3) {
         ws.getCell(`E${i}`).value = {
-          formula: `IFERROR(VLOOKUP(F${i}, 'Referensi RK'!$A$2:$B$${last}, 2, FALSE), "")`,
+          formula: `IFERROR(VLOOKUP(F${i}, Daftar_RK!$A$2:$B$${last}, 2, FALSE), "")`,
         };
       }
-
-      // Dropdown alternatif pada kolom E (Kode RK) jika ingin memilih kode
-      ws.getCell(`E${i}`).dataValidation = {
-        type: 'list',
-        allowBlank: true,
-        formulae: [`='Referensi RK'!$B$2:$B$${last}`],
-        showErrorMessage: false,
-      };
     }
   }
 
@@ -269,19 +269,18 @@ async function buildTemplate(rencanaRows) {
     'PETUNJUK IMPORT EXCEL KEGIATAN — KeepNoteAI Desktop',
     '',
     '1. Isi data mulai BARIS KE-3 pada sheet "Kegiatan" (baris 2 hanya contoh, hapus/ditimpa).',
-    '2. Kolom WAJIB: Tanggal Mulai, Rencana Kinerja (atau Kode RK), Kegiatan (min. 5 karakter), Capaian.',
+    '2. CARA MEMILIH RENCANA KINERJA (DROPDOWN OTOMATIS):',
+    '   - Klik sel pada Kolom F (Rencana Kinerja), klik tanda panah dropdown/select, lalu pilih rencana kerja Anda.',
+    '   - Kolom E (Kode RK) akan TERISI OTOMATIS oleh rumus Excel sesuai rencana yang dipilih.',
+    '3. Kolom WAJIB: Tanggal Mulai, Rencana Kinerja (atau Kode RK), Kegiatan (min. 5 karakter), Capaian.',
     '   Kolom lain opsional (Progress kosong = 100%).',
-    '3. CARA MEMILIH RENCANA KINERJA:',
-    '   - Klik sel pada Kolom F (Rencana Kinerja), klik tanda panah dropdown, lalu pilih kegiatan Anda.',
-    '   - Kolom E (Kode RK) akan terisi otomatis dengan rumus Excel.',
-    '   - Anda juga dapat langsung memilih atau mengetik Kode RK di Kolom E jika diinginkan.',
-    '4. Sheet "Referensi RK" berisi daftar Rencana Kinerja aktif milik akun Anda.',
+    '4. Sheet "Daftar_RK" berisi daftar Rencana Kinerja aktif milik akun Anda.',
     '   Jika daftar kosong atau belum update, buka aplikasi desktop lalu jalankan',
     '   "Sync Program & Tim Kerja dari Portal" di menu Pengaturan.',
     '5. Format tanggal: YYYY-MM-DD atau DD/MM/YYYY. Format jam: HH:MM (contoh: 08:00).',
     '6. Bukti Dukung: satu atau beberapa URL link Google Drive/website, pisahkan dengan enter atau koma.',
     '7. Setelah selesai mengisi, simpan file (.xlsx) lalu klik tombol "Import Excel" di aplikasi desktop.',
-    '8. Data yang berhasil diimpor akan tersimpan di database lokal & website, serta siap di-sync ke portal e-Kinerja.',
+    '8. Data yang berhasil diimpor akan tersimpan di database dan siap di-sync ke portal e-Kinerja.',
   ];
   lines.forEach((t, i) => {
     tips.getCell(`A${i + 1}`).value = t;

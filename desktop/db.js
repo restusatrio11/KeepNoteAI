@@ -138,7 +138,7 @@ async function clearAllSyncStatus(userId) {
 async function listRencana(userId) {
   if (!pool) throw new Error('Database belum dikonfigurasi');
   const { rows } = await pool.query(
-    `SELECT id, nama, kode, portal_rkid AS "portalRkid" FROM master_rencana WHERE user_id = $1 ORDER BY created_at DESC`,
+    `SELECT id, nama, kode, iki, portal_rkid AS "portalRkid" FROM master_rencana WHERE user_id = $1 ORDER BY kode ASC, created_at DESC`,
     [userId],
   );
   return rows;
