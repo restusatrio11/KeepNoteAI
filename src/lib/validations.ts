@@ -82,6 +82,15 @@ export interface DossierPhoto {
   caption: string;
 }
 
+export interface DossierAttachment {
+  id: string;
+  nama: string;
+  tipe: string;
+  ukuran?: number;
+  dataUrl?: string; // base64 data URL e.g. data:application/pdf;base64,... or URL
+  keterangan?: string;
+}
+
 export interface DossierDocumentPayload {
   judul: string;
   tanggal: string; // YYYY-MM-DD
@@ -101,5 +110,6 @@ export interface DossierDocumentPayload {
   kendalaTindakLanjut?: string;
   tandaTanganUrl?: string | null;
   photos: DossierPhoto[];
+  lampiran?: DossierAttachment[];
 }
 

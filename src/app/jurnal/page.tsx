@@ -26,14 +26,57 @@ import {
   AlertCircle,
   Save,
   FileSignature,
+  Paperclip,
+  File as FileIcon,
+  ExternalLink,
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import SearchableSelect from '@/components/SearchableSelect';
+import { DossierAttachment } from '@/lib/validations';
 
 interface PhotoItem {
   id: string;
   dataUrl: string;
   caption: string;
+}
+
+function processSignatureImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new window.Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 800;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(e.target?.result as string);
+          return;
+        }
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        // Export as PNG so transparency is preserved (prevents black box background)
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = reject;
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function compressImage(file: File): Promise<string> {
@@ -128,6 +171,11 @@ export default function JurnalPage() {
   // Photos
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
+  // Lampiran Documents (PDF / Docs)
+  const [lampiranList, setLampiranList] = useState<DossierAttachment[]>([]);
+  const [isUploadingLampiran, setIsUploadingLampiran] = useState(false);
+  const lampiranInputRef = useRef<HTMLInputElement>(null);
 
   // Export Loading States
   const [isExportingDocx, setIsExportingDocx] = useState(false);
@@ -269,8 +317,8 @@ export default function JurnalPage() {
       return;
     }
     try {
-      const compressed = await compressImage(file);
-      setTandaTangan(compressed);
+      const processedTtd = await processSignatureImage(file);
+      setTandaTangan(processedTtd);
       showToast('Tanda tangan pelaksana berhasil diunggah!', 'success');
     } catch (err) {
       showToast('Gagal memproses tanda tangan', 'error');
@@ -321,6 +369,78 @@ export default function JurnalPage() {
     setPhotos((prev) =>
       prev.map((p) => (p.id === id ? { ...p, caption } : p))
     );
+  };
+
+  // Handle Lampiran Documents Upload (PDF, docs)
+  const handleLampiranUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploadingLampiran(true);
+    try {
+      const newItems: DossierAttachment[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        const indexNumber = lampiranList.length + newItems.length + 1;
+        const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/_/g, ' ');
+        newItems.push({
+          id: Math.random().toString(36).substring(2, 9),
+          nama: file.name,
+          tipe: file.type || 'application/pdf',
+          ukuran: file.size,
+          dataUrl,
+          keterangan: `Lampiran ${indexNumber}: ${cleanName}`,
+        });
+      }
+
+      setLampiranList((prev) => [...prev, ...newItems]);
+      showToast(`${newItems.length} berkas lampiran berhasil ditambahkan!`, 'success');
+    } catch (err) {
+      showToast('Gagal memproses berkas lampiran', 'error');
+    } finally {
+      setIsUploadingLampiran(false);
+      if (lampiranInputRef.current) lampiranInputRef.current.value = '';
+    }
+  };
+
+  const removeLampiran = (id: string) => {
+    setLampiranList((prev) => prev.filter((l) => l.id !== id));
+  };
+
+  const updateLampiranKeterangan = (id: string, keterangan: string) => {
+    setLampiranList((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, keterangan } : l))
+    );
+  };
+
+  const previewLampiran = (item: DossierAttachment) => {
+    if (!item.dataUrl) return;
+    if (item.dataUrl.startsWith('http')) {
+      window.open(item.dataUrl, '_blank');
+      return;
+    }
+    try {
+      const parts = item.dataUrl.split(',');
+      const byteString = atob(parts[1]);
+      const mimeString = parts[0].split(':')[1].split(';')[0];
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      const blob = new Blob([ab], { type: mimeString });
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank');
+    } catch {
+      window.open(item.dataUrl, '_blank');
+    }
   };
 
   // Dynamic Array Handlers
@@ -376,6 +496,7 @@ export default function JurnalPage() {
       kendalaTindakLanjut: kendalaTindakLanjut || undefined,
       tandaTanganUrl: tandaTangan || undefined,
       photos: photos.map((p) => ({ dataUrl: p.dataUrl, caption: p.caption })),
+      lampiran: lampiranList,
     };
   };
 
@@ -452,8 +573,8 @@ export default function JurnalPage() {
         throw new Error(data.error || 'Gagal menyimpan laporan ke histori database');
       }
 
-      if (data.docxDriveLink) {
-        setLastSavedDriveUrl(data.docxDriveLink);
+      if (data.pdfDriveLink || data.docxDriveLink) {
+        setLastSavedDriveUrl(data.pdfDriveLink || data.docxDriveLink);
       }
 
       showToast(data.message || 'Laporan berhasil disimpan ke Menu Laporan!', 'success');
@@ -1337,6 +1458,200 @@ export default function JurnalPage() {
               )}
             </div>
 
+            {/* CARD 5: Lampiran Dokumen PDF & Berkas */}
+            <div className="card glass">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <div
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '8px',
+                      background: 'rgba(59, 130, 246, 0.15)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Paperclip size={16} color="var(--primary)" />
+                  </div>
+                  <h3 style={{ fontWeight: 700, fontSize: '1.1rem' }}>
+                    5. Lampiran Dokumen PDF ({lampiranList.length})
+                  </h3>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => lampiranInputRef.current?.click()}
+                  disabled={isUploadingLampiran}
+                  className="btn glass"
+                  style={{
+                    padding: '0.4rem 0.8rem',
+                    fontSize: '0.8rem',
+                    width: 'auto',
+                  }}
+                >
+                  <Plus size={14} />
+                  <span>Tambah Berkas</span>
+                </button>
+              </div>
+
+              {/* Hidden File Input for Lampiran */}
+              <input
+                ref={lampiranInputRef}
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.xls,.xlsx,image/*"
+                onChange={handleLampiranUpload}
+                style={{ display: 'none' }}
+              />
+
+              {/* Upload Dropzone */}
+              <div
+                onClick={() => lampiranInputRef.current?.click()}
+                style={{
+                  border: '2px dashed var(--border)',
+                  borderRadius: '14px',
+                  padding: '1.25rem',
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  backgroundColor: 'rgba(255, 255, 255, 0.01)',
+                  transition: 'all 0.2s',
+                  marginBottom: '1rem',
+                }}
+              >
+                {isUploadingLampiran ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+                    <Loader2 size={24} className="spin" color="var(--primary)" />
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      Memproses berkas lampiran...
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem' }}>
+                    <Paperclip size={26} color="var(--primary)" style={{ opacity: 0.8 }} />
+                    <p style={{ fontSize: '0.88rem', fontWeight: 600 }}>
+                      Klik atau seret dokumen PDF lampiran di sini
+                    </p>
+                    <p className="text-muted" style={{ fontSize: '0.78rem' }}>
+                      Contoh: Surat Tugas, SPT, Bahan Paparan, Instrumen Sensus/Survei, atau Berita Acara.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Lampiran List */}
+              {lampiranList.length === 0 ? (
+                <p className="text-muted" style={{ fontSize: '0.82rem', textAlign: 'center', fontStyle: 'italic' }}>
+                  Belum ada dokumen lampiran. Berkas PDF yang dilampirkan akan otomatis digabung ke dalam dokumen PDF utuh.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {lampiranList.map((item, index) => {
+                    const isPdf = item.tipe === 'application/pdf' || item.nama.toLowerCase().endsWith('.pdf');
+                    const sizeFormatted = item.ukuran ? `${Math.round(item.ukuran / 1024)} KB` : '';
+                    return (
+                      <div
+                        key={item.id}
+                        style={{
+                          display: 'flex',
+                          gap: '0.75rem',
+                          alignItems: 'center',
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          border: '1px solid var(--border)',
+                          padding: '0.75rem 0.85rem',
+                          borderRadius: '12px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '42px',
+                            height: '42px',
+                            borderRadius: '8px',
+                            background: isPdf ? 'rgba(239, 68, 68, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                            color: isPdf ? '#f87171' : '#60a5fa',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            fontWeight: 800,
+                            fontSize: '0.7rem',
+                            border: `1px solid ${isPdf ? 'rgba(239, 68, 68, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
+                          }}
+                        >
+                          <FileText size={16} />
+                          <span>{isPdf ? 'PDF' : 'DOC'}</span>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.2rem' }}>
+                            <span
+                              style={{
+                                fontSize: '0.82rem',
+                                fontWeight: 700,
+                                color: '#f1f5f9',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                              title={item.nama}
+                            >
+                              {item.nama}
+                            </span>
+                            {sizeFormatted && (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+                                {sizeFormatted}
+                              </span>
+                            )}
+                          </div>
+                          <input
+                            type="text"
+                            className="input-base"
+                            value={item.keterangan || ''}
+                            onChange={(e) => updateLampiranKeterangan(item.id, e.target.value)}
+                            placeholder="Keterangan lampiran (misal: Surat Tugas / SPT)..."
+                            style={{
+                              fontSize: '0.78rem',
+                              padding: '0.3rem 0.6rem',
+                              borderRadius: '6px',
+                            }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexShrink: 0 }}>
+                          {item.dataUrl && (
+                            <button
+                              type="button"
+                              onClick={() => previewLampiran(item)}
+                              className="btn glass"
+                              style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', width: 'auto' }}
+                              title="Buka / Pratinjau berkas"
+                            >
+                              <ExternalLink size={14} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeLampiran(item.id)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              padding: '0.35rem',
+                              opacity: 0.8,
+                            }}
+                            title="Hapus lampiran"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Quick Save to Histori & Google Drive */}
             <div
               style={{
@@ -1353,10 +1668,10 @@ export default function JurnalPage() {
                 <div>
                   <p style={{ fontWeight: 600, fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     <UploadCloud size={16} color="#10b981" />
-                    <span>Simpan ke Laporan & Upload Word ke Drive</span>
+                    <span>Simpan ke Laporan & Upload PDF ke Drive</span>
                   </p>
                   <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: '2px' }}>
-                    Otomatis generate file Word (.docx), upload ke Google Drive sebagai bukti kegiatan, dan catat ke riwayat Laporan.
+                    Otomatis generate berkas PDF resmi (lengkap dengan lampiran), upload ke Google Drive sebagai bukti kegiatan, dan catat ke riwayat Laporan.
                   </p>
                 </div>
                 <button
@@ -1394,7 +1709,7 @@ export default function JurnalPage() {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <CheckCircle2 size={16} color="#34d399" />
-                    <span style={{ fontSize: '0.8rem', color: '#6ee7b7' }}>File Word terunggah di Google Drive</span>
+                    <span style={{ fontSize: '0.8rem', color: '#6ee7b7' }}>Dokumen PDF terunggah di Google Drive</span>
                   </div>
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
                     <a
@@ -1404,7 +1719,7 @@ export default function JurnalPage() {
                       className="btn glass"
                       style={{ width: 'auto', padding: '0.2rem 0.6rem', fontSize: '0.75rem', color: '#a7f3d0' }}
                     >
-                      Buka di Drive
+                      Buka PDF di Drive
                     </a>
                     <a
                       href="/laporan"
@@ -1739,7 +2054,62 @@ export default function JurnalPage() {
               </div>
             )}
 
-            {/* 10. LEMBAR PENGESAHAN & TANDA TANGAN (Hanya Pelaksana Kegiatan) */}
+            {/* 10. DAFTAR LAMPIRAN DOKUMEN PENDUKUNG */}
+            {lampiranList.length > 0 && (
+              <div style={{ marginBottom: '2rem' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#003366', marginBottom: '8px' }}>
+                  {latarBelakang
+                    ? kendalaTindakLanjut
+                      ? photos.length > 0
+                        ? 'VI. DAFTAR LAMPIRAN DOKUMEN'
+                        : 'V. DAFTAR LAMPIRAN DOKUMEN'
+                      : photos.length > 0
+                      ? 'V. DAFTAR LAMPIRAN DOKUMEN'
+                      : 'IV. DAFTAR LAMPIRAN DOKUMEN'
+                    : kendalaTindakLanjut
+                    ? photos.length > 0
+                      ? 'V. DAFTAR LAMPIRAN DOKUMEN'
+                      : 'IV. DAFTAR LAMPIRAN DOKUMEN'
+                    : photos.length > 0
+                    ? 'IV. DAFTAR LAMPIRAN DOKUMEN'
+                    : 'III. DAFTAR LAMPIRAN DOKUMEN'}
+                </h4>
+                <table
+                  style={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    fontSize: '12px',
+                    border: '1px solid #e2e8f0',
+                  }}
+                >
+                  <thead>
+                    <tr style={{ background: '#003366', color: '#ffffff' }}>
+                      <th style={{ padding: '6px 8px', width: '35px', textAlign: 'center' }}>No</th>
+                      <th style={{ padding: '6px 10px', textAlign: 'left' }}>Nama Berkas Lampiran</th>
+                      <th style={{ padding: '6px 10px', textAlign: 'left' }}>Keterangan Dokumen</th>
+                      <th style={{ padding: '6px 8px', width: '80px', textAlign: 'center' }}>Ukuran</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lampiranList.map((att, idx) => (
+                      <tr key={att.id} style={{ borderBottom: '1px solid #e2e8f0', background: idx % 2 === 1 ? '#f8fafc' : '#ffffff' }}>
+                        <td style={{ padding: '6px 8px', textAlign: 'center', color: '#64748b' }}>{idx + 1}</td>
+                        <td style={{ padding: '6px 10px', fontWeight: 600, color: '#0f172a' }}>{att.nama}</td>
+                        <td style={{ padding: '6px 10px', color: '#334155' }}>{att.keterangan || '-'}</td>
+                        <td style={{ padding: '6px 8px', textAlign: 'center', color: '#64748b' }}>
+                          {att.ukuran ? `${Math.round(att.ukuran / 1024)} KB` : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p style={{ fontSize: '11px', color: '#0284c7', marginTop: '6px', fontStyle: 'italic' }}>
+                  * Berkas lampiran PDF di atas akan otomatis digabungkan sebagai lampiran halaman lanjutan saat dokumen diunduh dalam format PDF (.pdf).
+                </p>
+              </div>
+            )}
+
+            {/* 11. LEMBAR PENGESAHAN & TANDA TANGAN (Hanya Pelaksana Kegiatan) */}
             <div style={{ marginTop: '2.5rem', display: 'flex', justifyContent: 'flex-end', textAlign: 'center' }}>
               <div style={{ minWidth: '220px' }}>
                 <div style={{ fontSize: '13px', color: '#334155' }}>

@@ -563,7 +563,143 @@ export async function generateDailyDossierDocx(data: DossierDocumentPayload): Pr
     }
   }
 
-  // 10. LEMBAR PENGESAHAN / TANDA TANGAN (Hanya Pelaksana Kegiatan)
+  // 10. DAFTAR LAMPIRAN DOKUMEN PENDUKUNG
+  if (Array.isArray(data.lampiran) && data.lampiran.length > 0) {
+    children.push(createSectionHeading('DAFTAR LAMPIRAN DOKUMEN'));
+
+    const lampiranHeaderRow = new TableRow({
+      tableHeader: true,
+      children: [
+        new TableCell({
+          width: { size: 8, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, fill: '003366' },
+          margins: { top: 80, bottom: 80, left: 100, right: 100 },
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: 'No', bold: true, size: 19, font: 'Calibri', color: 'FFFFFF' })],
+            }),
+          ],
+        }),
+        new TableCell({
+          width: { size: 42, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, fill: '003366' },
+          margins: { top: 80, bottom: 80, left: 100, right: 100 },
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: 'Nama Berkas Lampiran', bold: true, size: 19, font: 'Calibri', color: 'FFFFFF' })],
+            }),
+          ],
+        }),
+        new TableCell({
+          width: { size: 35, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, fill: '003366' },
+          margins: { top: 80, bottom: 80, left: 100, right: 100 },
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: 'Keterangan Dokumen', bold: true, size: 19, font: 'Calibri', color: 'FFFFFF' })],
+            }),
+          ],
+        }),
+        new TableCell({
+          width: { size: 15, type: WidthType.PERCENTAGE },
+          shading: { type: ShadingType.CLEAR, fill: '003366' },
+          margins: { top: 80, bottom: 80, left: 100, right: 100 },
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: 'Ukuran', bold: true, size: 19, font: 'Calibri', color: 'FFFFFF' })],
+            }),
+          ],
+        }),
+      ],
+    });
+
+    const lampiranDataRows = data.lampiran.map((att, idx) => {
+      const isEven = idx % 2 === 1;
+      const bg = isEven ? 'F8FAFC' : 'FFFFFF';
+      const sizeStr = att.ukuran ? `${Math.round(att.ukuran / 1024)} KB` : '-';
+      return new TableRow({
+        children: [
+          new TableCell({
+            width: { size: 8, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: bg },
+            borders: {
+              top: thinBorder('E2E8F0'),
+              bottom: thinBorder('E2E8F0'),
+              left: thinBorder('E2E8F0'),
+              right: thinBorder('E2E8F0'),
+            },
+            margins: { top: 70, bottom: 70, left: 100, right: 100 },
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ text: `${idx + 1}`, size: 18, font: 'Calibri' })],
+              }),
+            ],
+          }),
+          new TableCell({
+            width: { size: 42, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: bg },
+            borders: {
+              top: thinBorder('E2E8F0'),
+              bottom: thinBorder('E2E8F0'),
+              left: thinBorder('E2E8F0'),
+              right: thinBorder('E2E8F0'),
+            },
+            margins: { top: 70, bottom: 70, left: 100, right: 100 },
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: att.nama || `Lampiran ${idx + 1}`, bold: true, size: 18, font: 'Calibri', color: '0F172A' })],
+              }),
+            ],
+          }),
+          new TableCell({
+            width: { size: 35, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: bg },
+            borders: {
+              top: thinBorder('E2E8F0'),
+              bottom: thinBorder('E2E8F0'),
+              left: thinBorder('E2E8F0'),
+              right: thinBorder('E2E8F0'),
+            },
+            margins: { top: 70, bottom: 70, left: 100, right: 100 },
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: att.keterangan || 'Dokumen pendukung kegiatan', size: 18, font: 'Calibri', color: '475569' })],
+              }),
+            ],
+          }),
+          new TableCell({
+            width: { size: 15, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: bg },
+            borders: {
+              top: thinBorder('E2E8F0'),
+              bottom: thinBorder('E2E8F0'),
+              left: thinBorder('E2E8F0'),
+              right: thinBorder('E2E8F0'),
+            },
+            margins: { top: 70, bottom: 70, left: 100, right: 100 },
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ text: sizeStr, size: 18, font: 'Calibri', color: '64748B' })],
+              }),
+            ],
+          }),
+        ],
+      });
+    });
+
+    children.push(
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [lampiranHeaderRow, ...lampiranDataRows],
+      })
+    );
+  }
+
+  // 11. LEMBAR PENGESAHAN / TANDA TANGAN (Hanya Pelaksana Kegiatan)
   children.push(new Paragraph({ spacing: { before: 360 } }));
 
   const tempatTgl = `${data.tempat?.split('/')[0]?.trim() || 'Tempat Tugas'}, ${formatDateIndo(data.tanggal)}`;

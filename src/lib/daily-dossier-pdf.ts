@@ -2,6 +2,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as fs from 'fs';
 import * as path from 'path';
+import { PDFDocument } from 'pdf-lib';
 import { DossierDocumentPayload } from './validations';
 
 declare module 'jspdf' {
@@ -410,7 +411,52 @@ export async function generateDailyDossierPdf(data: DossierDocumentPayload): Pro
     }
   }
 
-  // 10. TANDA TANGAN / PENGESAHAN (Hanya Pelaksana Kegiatan)
+  // 10. DAFTAR LAMPIRAN DOKUMEN PENDUKUNG
+  if (Array.isArray(data.lampiran) && data.lampiran.length > 0) {
+    ensureSpace(25);
+    const secLampiranTitle = 'DAFTAR LAMPIRAN DOKUMEN';
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(0, 51, 102);
+    doc.text(secLampiranTitle, margin, currentY);
+    currentY += 4.5;
+
+    const lampiranRows = data.lampiran.map((att, idx) => [
+      `${idx + 1}`,
+      att.nama || `Lampiran ${idx + 1}`,
+      att.keterangan || 'Dokumen pendukung kegiatan kedinasan',
+      att.ukuran ? `${Math.round(att.ukuran / 1024)} KB` : '-',
+    ]);
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['No', 'Nama Berkas Lampiran', 'Keterangan Dokumen', 'Ukuran']],
+      body: lampiranRows,
+      theme: 'grid',
+      styles: {
+        fontSize: 8,
+        cellPadding: 2,
+        textColor: [30, 41, 59],
+        lineColor: [226, 232, 240],
+      },
+      headStyles: {
+        fillColor: [0, 51, 102],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+      },
+      columnStyles: {
+        0: { cellWidth: 10, halign: 'center' },
+        1: { cellWidth: 65, fontStyle: 'bold' },
+        2: { cellWidth: 'auto' },
+        3: { cellWidth: 22, halign: 'center' },
+      },
+      margin: { left: margin, right: margin },
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 6;
+  }
+
+  // 11. TANDA TANGAN / PENGESAHAN (Hanya Pelaksana Kegiatan)
   ensureSpace(40);
   currentY += 4;
 
@@ -463,7 +509,7 @@ export async function generateDailyDossierPdf(data: DossierDocumentPayload): Pro
     { align: 'center' }
   );
 
-  // 11. FOOTER NUMBERING PADA SETIAP HALAMAN
+  // 12. FOOTER NUMBERING PADA SETIAP HALAMAN
   const totalPages = doc.internal.pages.length - 1;
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
@@ -478,5 +524,57 @@ export async function generateDailyDossierPdf(data: DossierDocumentPayload): Pro
     doc.text(`Halaman ${i} dari ${totalPages}`, pageWidth - margin, pageHeight - 7, { align: 'right' });
   }
 
-  return new Uint8Array(doc.output('arraybuffer'));
+  const mainPdfBytes = new Uint8Array(doc.output('arraybuffer'));
+
+  // Merge any attached PDF files into the final PDF bundle
+  const pdfAttachments = (data.lampiran || []).filter(
+    (l) =>
+      l.dataUrl &&
+      (l.tipe === 'application/pdf' ||
+        l.dataUrl.startsWith('data:application/pdf') ||
+        l.nama?.toLowerCase().endsWith('.pdf'))
+  );
+
+  if (pdfAttachments.length === 0) {
+    return mainPdfBytes;
+  }
+
+  try {
+    const mergedPdf = await PDFDocument.create();
+    const mainPdfDoc = await PDFDocument.load(mainPdfBytes);
+    const mainPages = await mergedPdf.copyPages(mainPdfDoc, mainPdfDoc.getPageIndices());
+    mainPages.forEach((page) => mergedPdf.addPage(page));
+
+    for (const att of pdfAttachments) {
+      try {
+        let donorBuffer: Buffer | null = null;
+        if (att.dataUrl?.startsWith('data:')) {
+          const b64 = att.dataUrl.split(',')[1];
+          if (b64) donorBuffer = Buffer.from(b64, 'base64');
+        } else if (att.dataUrl?.startsWith('http')) {
+          let fetchUrl = att.dataUrl;
+          const driveMatch = att.dataUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+          if (driveMatch) {
+            fetchUrl = `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
+          }
+          const res = await fetch(fetchUrl, { signal: AbortSignal.timeout(15000) });
+          if (res.ok) donorBuffer = Buffer.from(await res.arrayBuffer());
+        }
+
+        if (donorBuffer) {
+          const donorPdf = await PDFDocument.load(donorBuffer, { ignoreEncryption: true });
+          const donorPages = await mergedPdf.copyPages(donorPdf, donorPdf.getPageIndices());
+          donorPages.forEach((page) => mergedPdf.addPage(page));
+        }
+      } catch (attErr) {
+        console.warn(`Failed to merge PDF attachment "${att.nama}":`, attErr);
+      }
+    }
+
+    const mergedBytes = await mergedPdf.save();
+    return new Uint8Array(mergedBytes);
+  } catch (mergeErr) {
+    console.error('Error merging PDF attachments with main dossier:', mergeErr);
+    return mainPdfBytes;
+  }
 }

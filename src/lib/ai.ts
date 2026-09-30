@@ -18,7 +18,7 @@ async function callOpenRouter<T>(
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is not defined. Mohon atur OPENROUTER_API_KEY di file .env');
 
-  const selectedModel = overrideModel || process.env.AI_MODEL || 'qwen/qwen3.8-27b:free';
+  const selectedModel = overrideModel || process.env.AI_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
   let lastError = '';
 
   for (let i = 0; i <= retries; i++) {
@@ -278,7 +278,8 @@ export async function analyzeImageReport(base64Image: string, contentType: strin
     { type: 'image_url', image_url: { url: `data:${contentType};base64,${base64Image}` } }
   ];
 
-  return callOpenRouter(userPrompt, AIResponseSchema, systemPrompt);
+  const visionModel = process.env.AI_VISION_MODEL || 'google/gemini-2.0-flash-lite-preview-02-05:free';
+  return callOpenRouter(userPrompt, AIResponseSchema, systemPrompt, 2, visionModel);
 }
 
 /**

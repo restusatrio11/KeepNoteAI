@@ -273,20 +273,63 @@ function findBestRencana(rencanaList: any[], hint: string) {
   return best;
 }
 
-async function callAI(messages: any[], expectJson = true) {
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://keep-note-ai.vercel.app';
+const SITE_NAME = 'KeepNoteAI';
+
+function deriveDefaultCapaian(kegiatan: string): string {
+  if (!kegiatan) return 'Tercapai sesuai target.';
+  const lower = kegiatan.trim().toLowerCase();
+  if (lower.startsWith('melakukan ') || lower.startsWith('melaksanakan ')) {
+    return 'Terlaksananya ' + kegiatan.slice(lower.startsWith('melakukan ') ? 10 : 13).trim();
+  }
+  if (lower.startsWith('menyusun ') || lower.startsWith('membuat ')) {
+    return 'Tersusunnya ' + kegiatan.slice(lower.startsWith('menyusun ') ? 9 : 8).trim();
+  }
+  if (lower.startsWith('mengikuti ') || lower.startsWith('menghadiri ')) {
+    return 'Terlaksananya keikutsertaan dalam ' + kegiatan.slice(lower.startsWith('mengikuti ') ? 10 : 11).trim();
+  }
+  if (lower.startsWith('memeriksa ') || lower.startsWith('mengecek ') || lower.startsWith('validasi ')) {
+    return 'Terselesaikannya pemeriksaan dan validasi ' + kegiatan.replace(/^(memeriksa|mengecek|validasi)\s*/i, '').trim();
+  }
+  if (lower.startsWith('mengentri ') || lower.startsWith('entri ')) {
+    return 'Terselesaikannya entri data ' + kegiatan.replace(/^(mengentri|entri)\s*(data)?\s*/i, '').trim();
+  }
+  return `Terselesaikannya kegiatan ${kegiatan.toLowerCase().replace(/^(melakukan|melaksanakan)\s*/i, '')}.`;
+}
+
+async function callAI(messages: any[], expectJson = true, modelOverride?: string) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    console.warn('OPENROUTER_API_KEY is not configured.');
+    return { kegiatan: '' };
+  }
+
+  const selectedModel = modelOverride || process.env.AI_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
   const body: any = {
-    model: process.env.AI_MODEL || 'qwen/qwen3.8-27b:free',
+    model: selectedModel,
     messages,
   };
+  if (expectJson) {
+    body.response_format = { type: 'json_object' };
+  }
+
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
+      'HTTP-Referer': SITE_URL,
+      'X-Title': SITE_NAME,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
   });
+
   const data = await res.json();
+  if (data.error) {
+    console.error('OpenRouter API error in Telegram bot:', data.error);
+    throw new Error(data.error.message || 'OpenRouter API Error');
+  }
+
   let raw = data.choices?.[0]?.message?.content || '';
   // Strip reasoning tokens (<think>...</think>) if present
   raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
@@ -864,7 +907,7 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
 
     // 2. Tentukan kegiatan & capaian
     let kegiatan = caption?.trim();
-    let capaian = 'Tercapai sesuai target.';
+    let capaian = kegiatan ? deriveDefaultCapaian(kegiatan) : 'Tercapai sesuai target.';
     const isAiPolish = user.telegramAiPolish !== false;
 
     if (kegiatan) {
@@ -880,7 +923,10 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
             { role: 'system', content: systemPrompt },
             { role: 'user', content: kegiatan },
           ]);
-          if (aiResult.kegiatan) { kegiatan = aiResult.kegiatan; capaian = aiResult.capaian || capaian; }
+          if (aiResult.kegiatan) { 
+            kegiatan = aiResult.kegiatan; 
+            capaian = aiResult.capaian || deriveDefaultCapaian(kegiatan); 
+          }
         } catch (err) {
           console.error('AI polish error:', err);
         }
@@ -890,15 +936,16 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
         await sendMsg(chatId, '🧠 AI menganalisis gambar...');
         const base64 = buffer.toString('base64');
         const systemPrompt = getBpsImageSystemPrompt(activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined);
+        const visionModel = process.env.AI_VISION_MODEL || 'google/gemini-2.0-flash-lite-preview-02-05:free';
         const aiResult = await callAI([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: [
             { type: 'text', text: 'Analisis bukti dokumen/foto kegiatan pegawai BPS ini dan rumuskan deskripsi kegiatan serta capaian formalnya.' },
             { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } }
           ]},
-        ]);
+        ], true, visionModel);
         kegiatan = aiResult.kegiatan;
-        capaian = aiResult.capaian || capaian;
+        capaian = aiResult.capaian || (kegiatan ? deriveDefaultCapaian(kegiatan) : 'Tercapai sesuai target.');
         if (!kegiatan) {
           await sendMsg(chatId, '❌ Tidak ada deskripsi terdeteksi. Kirim foto dengan caption atau ketik deskripsi kegiatan.');
           return;
@@ -1010,7 +1057,7 @@ async function handleText(chatId: string, user: any, text: string) {
 
   const isAiPolish = user.telegramAiPolish !== false;
   let kegiatan = rawText || 'Menyertakan bukti pendukung kegiatan.';
-  let capaian = 'Tercapai sesuai target.';
+  let capaian = deriveDefaultCapaian(kegiatan);
 
   if (isAiPolish) {
     await sendMsg(chatId, '🧠 AI merapikan deskripsi kegiatan...');
@@ -1028,7 +1075,7 @@ async function handleText(chatId: string, user: any, text: string) {
 
       if (aiResult.kegiatan) {
         kegiatan = aiResult.kegiatan;
-        capaian = aiResult.capaian || capaian;
+        capaian = aiResult.capaian || deriveDefaultCapaian(kegiatan);
       }
     } catch (e) {
       console.error('AI polish text error:', e);
@@ -1221,8 +1268,8 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
     const docxBuf = await generateDailyDossierDocx(payload);
     const docxFilename = `${safeTitle}_${targetDate}.docx`;
 
-    // Upload DOCX to Google Drive if configured
-    let docxDriveLink: string | null = null;
+    // Upload PDF to Google Drive if configured
+    let pdfDriveLink: string | null = null;
     try {
       const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientForUser, buildEvidenceFileName } = await import('@/lib/drive');
       const [settings] = await db
@@ -1245,20 +1292,20 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
           activeRk?.kode || 'RK',
           payload.judul || 'Jurnal_Harian'
         );
-        const fileName = `${base}.docx`;
+        const fileName = `${base}.pdf`;
         const uploadResult = await uploadToDrive(
-          docxBuf,
+          pdfBytes,
           fileName,
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/pdf',
           settings?.driveFolderId || '',
           drive
         );
         if (uploadResult?.link) {
-          docxDriveLink = uploadResult.link;
+          pdfDriveLink = uploadResult.link;
         }
       }
     } catch (driveErr) {
-      console.warn('Drive upload error for telegram jurnal docx:', driveErr);
+      console.warn('Drive upload error for telegram jurnal pdf:', driveErr);
     }
 
     // Save to Laporan DB
@@ -1271,7 +1318,7 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
     if (targetRk) {
       try {
         const buktiArr: string[] = [];
-        if (docxDriveLink) buktiArr.push(docxDriveLink);
+        if (pdfDriveLink) buktiArr.push(pdfDriveLink);
         for (const p of photos) {
           if (p.dataUrl && p.dataUrl.startsWith('http') && !buktiArr.includes(p.dataUrl)) {
             buktiArr.push(p.dataUrl);
@@ -1296,8 +1343,8 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
       }
     }
 
-    const docxCaption = docxDriveLink
-      ? `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.\n\n☁️ *Tersimpan di Google Drive & Menu Laporan:*\n🔗 [Buka Word di Google Drive](${docxDriveLink})\n📊 Tercatat di web: https://keep-note-ai.vercel.app/laporan`
+    const docxCaption = pdfDriveLink
+      ? `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.\n\n☁️ *PDF Tersimpan di Google Drive & Menu Laporan:*\n🔗 [Buka PDF di Google Drive](${pdfDriveLink})\n📊 Tercatat di web: https://keep-note-ai.vercel.app/laporan`
       : `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.\n\n📊 Tercatat di web: https://keep-note-ai.vercel.app/laporan`;
 
     await sendTgDocument(

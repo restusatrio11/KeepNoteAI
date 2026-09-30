@@ -3,6 +3,7 @@ import { auth } from '@/auth';
 import { db } from '@/db';
 import { laporan, userSettings, users, masterRencana } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { generateDailyDossierPdf } from '@/lib/daily-dossier-pdf';
 import { generateDailyDossierDocx } from '@/lib/daily-dossier-docx';
 import {
   uploadToDrive,
@@ -56,11 +57,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Generate DOCX Buffer
-    const docxBuffer = await generateDailyDossierDocx(dossier);
+    // 1. Generate PDF Buffer (including merged PDF attachments)
+    const pdfUint8 = await generateDailyDossierPdf(dossier);
+    const pdfBuffer = Buffer.from(pdfUint8);
 
     // 2. Upload to Google Drive if configured
-    let docxDriveLink: string | null = null;
+    let pdfDriveLink: string | null = null;
     let driveUploaded = false;
     let driveMessage = '';
 
@@ -90,12 +92,11 @@ export async function POST(req: NextRequest) {
           rencana.kode,
           dossier.judul || 'Jurnal_Harian'
         );
-        const fileName = `${fileNameBase}.docx`;
-        const mimeType =
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        const fileName = `${fileNameBase}.pdf`;
+        const mimeType = 'application/pdf';
 
         const uploadResult = await uploadToDrive(
-          docxBuffer,
+          pdfBuffer,
           fileName,
           mimeType,
           settings?.driveFolderId || '',
@@ -103,8 +104,38 @@ export async function POST(req: NextRequest) {
         );
 
         if (uploadResult?.link) {
-          docxDriveLink = uploadResult.link;
+          pdfDriveLink = uploadResult.link;
           driveUploaded = true;
+        }
+
+        // Upload any attached files (PDFs/docs) to Drive as well
+        if (Array.isArray(dossier.lampiran)) {
+          for (let i = 0; i < dossier.lampiran.length; i++) {
+            const att = dossier.lampiran[i];
+            if (att.dataUrl?.startsWith('data:')) {
+              try {
+                const b64 = att.dataUrl.split(',')[1];
+                if (b64) {
+                  const attBuf = Buffer.from(b64, 'base64');
+                  const safeAttName = (att.nama || `Lampiran_${i + 1}.pdf`).replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+                  const attFileName = `${fileNameBase}_Lampiran_${i + 1}_${safeAttName}`;
+                  const attMime = att.tipe || 'application/pdf';
+                  const attUpload = await uploadToDrive(
+                    attBuf,
+                    attFileName,
+                    attMime,
+                    settings?.driveFolderId || '',
+                    drive
+                  );
+                  if (attUpload?.link) {
+                    att.dataUrl = attUpload.link;
+                  }
+                }
+              } catch (attUploadErr) {
+                console.warn('Failed to upload attachment to drive:', att.nama, attUploadErr);
+              }
+            }
+          }
         }
       } catch (driveErr: any) {
         console.warn('Drive upload error during save-jurnal:', driveErr);
@@ -112,15 +143,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3. Compile bukti URLs (Word Drive link + any photo web URLs)
+    // 3. Compile bukti URLs (PDF Drive link + any photo web URLs + attachment links)
     const buktiLinks: string[] = [];
-    if (docxDriveLink) {
-      buktiLinks.push(docxDriveLink);
+    if (pdfDriveLink) {
+      buktiLinks.push(pdfDriveLink);
     }
     if (Array.isArray(dossier.photos)) {
       for (const p of dossier.photos) {
         if (p.dataUrl && p.dataUrl.startsWith('http') && !buktiLinks.includes(p.dataUrl)) {
           buktiLinks.push(p.dataUrl);
+        }
+      }
+    }
+    if (Array.isArray(dossier.lampiran)) {
+      for (const att of dossier.lampiran) {
+        if (att.dataUrl && att.dataUrl.startsWith('http') && !buktiLinks.includes(att.dataUrl)) {
+          buktiLinks.push(att.dataUrl);
         }
       }
     }
@@ -152,11 +190,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       laporanId: newLaporan.id,
-      docxDriveLink,
+      pdfDriveLink,
       driveUploaded,
       message: driveUploaded
-        ? 'Dokumen Word berhasil dibuat, diunggah ke Google Drive, dan dicatat ke daftar Laporan!'
-        : 'Laporan berhasil dicatat ke database. Hubungkan Google Drive di Pengaturan agar file Word otomatis terunggah ke Drive Anda.',
+        ? 'Dokumen PDF Jurnal berhasil dibuat, diunggah ke Google Drive, dan dicatat ke riwayat Laporan!'
+        : 'Laporan berhasil dicatat ke database. Hubungkan Google Drive di Pengaturan agar file PDF otomatis terunggah ke Drive Anda.',
     });
   } catch (error: any) {
     console.error('Error saving jurnal to laporan:', error);
