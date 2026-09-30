@@ -527,13 +527,19 @@ export async function generateDailyDossierPdf(data: DossierDocumentPayload): Pro
   const mainPdfBytes = new Uint8Array(doc.output('arraybuffer'));
 
   // Merge any attached PDF files into the final PDF bundle
-  const pdfAttachments = (data.lampiran || []).filter(
-    (l) =>
-      l.dataUrl &&
-      (l.tipe === 'application/pdf' ||
-        l.dataUrl.startsWith('data:application/pdf') ||
-        l.nama?.toLowerCase().endsWith('.pdf'))
-  );
+  const pdfAttachments = (data.lampiran || []).filter((l) => {
+    if (!l?.dataUrl) return false;
+    const type = (l.tipe || '').toLowerCase();
+    const name = (l.nama || '').toLowerCase();
+    const dataUrl = (l.dataUrl || '').toLowerCase();
+    return (
+      type.includes('pdf') ||
+      name.endsWith('.pdf') ||
+      dataUrl.startsWith('data:application/pdf') ||
+      dataUrl.startsWith('data:application/octet-stream') ||
+      dataUrl.includes('application/pdf')
+    );
+  });
 
   if (pdfAttachments.length === 0) {
     return mainPdfBytes;
@@ -541,33 +547,42 @@ export async function generateDailyDossierPdf(data: DossierDocumentPayload): Pro
 
   try {
     const mergedPdf = await PDFDocument.create();
-    const mainPdfDoc = await PDFDocument.load(mainPdfBytes);
+    const mainPdfDoc = await PDFDocument.load(mainPdfBytes, { ignoreEncryption: true });
     const mainPages = await mergedPdf.copyPages(mainPdfDoc, mainPdfDoc.getPageIndices());
     mainPages.forEach((page) => mergedPdf.addPage(page));
 
-    for (const att of pdfAttachments) {
+    for (let idx = 0; idx < pdfAttachments.length; idx++) {
+      const att = pdfAttachments[idx];
       try {
-        let donorBuffer: Buffer | null = null;
+        let donorBytes: Uint8Array | null = null;
         if (att.dataUrl?.startsWith('data:')) {
-          const b64 = att.dataUrl.split(',')[1];
-          if (b64) donorBuffer = Buffer.from(b64, 'base64');
+          const commaIndex = att.dataUrl.indexOf(',');
+          if (commaIndex !== -1) {
+            const b64 = att.dataUrl.slice(commaIndex + 1);
+            donorBytes = Uint8Array.from(Buffer.from(b64, 'base64'));
+          }
         } else if (att.dataUrl?.startsWith('http')) {
           let fetchUrl = att.dataUrl;
           const driveMatch = att.dataUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
           if (driveMatch) {
             fetchUrl = `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
           }
-          const res = await fetch(fetchUrl, { signal: AbortSignal.timeout(15000) });
-          if (res.ok) donorBuffer = Buffer.from(await res.arrayBuffer());
+          const res = await fetch(fetchUrl, { signal: AbortSignal.timeout(30000) });
+          if (res.ok) {
+            donorBytes = new Uint8Array(await res.arrayBuffer());
+          }
         }
 
-        if (donorBuffer) {
-          const donorPdf = await PDFDocument.load(donorBuffer, { ignoreEncryption: true });
+        if (donorBytes && donorBytes.length > 0) {
+          const donorPdf = await PDFDocument.load(donorBytes, {
+            ignoreEncryption: true,
+            updateMetadata: false,
+          });
           const donorPages = await mergedPdf.copyPages(donorPdf, donorPdf.getPageIndices());
           donorPages.forEach((page) => mergedPdf.addPage(page));
         }
       } catch (attErr) {
-        console.warn(`Failed to merge PDF attachment "${att.nama}":`, attErr);
+        console.warn(`Gagal menggabungkan lampiran PDF "${att.nama}":`, attErr);
       }
     }
 

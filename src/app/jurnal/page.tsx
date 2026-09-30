@@ -2088,6 +2088,7 @@ export default function JurnalPage() {
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Nama Berkas Lampiran</th>
                       <th style={{ padding: '6px 10px', textAlign: 'left' }}>Keterangan Dokumen</th>
                       <th style={{ padding: '6px 8px', width: '80px', textAlign: 'center' }}>Ukuran</th>
+                      <th style={{ padding: '6px 8px', width: '70px', textAlign: 'center' }}>Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2099,13 +2100,47 @@ export default function JurnalPage() {
                         <td style={{ padding: '6px 8px', textAlign: 'center', color: '#64748b' }}>
                           {att.ukuran ? `${Math.round(att.ukuran / 1024)} KB` : '-'}
                         </td>
+                        <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => previewLampiran(att)}
+                            style={{
+                              padding: '2px 8px',
+                              fontSize: '11px',
+                              borderRadius: '4px',
+                              border: '1px solid #cbd5e1',
+                              background: '#f1f5f9',
+                              color: '#0369a1',
+                              cursor: 'pointer',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Buka
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                <p style={{ fontSize: '11px', color: '#0284c7', marginTop: '6px', fontStyle: 'italic' }}>
-                  * Berkas lampiran PDF di atas akan otomatis digabungkan sebagai lampiran halaman lanjutan saat dokumen diunduh dalam format PDF (.pdf).
-                </p>
+                <div
+                  style={{
+                    marginTop: '8px',
+                    padding: '8px 12px',
+                    background: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    borderRadius: '6px',
+                    fontSize: '11.5px',
+                    color: '#1e40af',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <CheckCircle2 size={15} color="#2563eb" style={{ flexShrink: 0 }} />
+                  <span>
+                    <strong>Otomatis Tergabung:</strong> Seluruh berkas PDF lampiran di atas otomatis digabungkan sebagai halaman lanjutan saat diunduh via <strong>Download PDF</strong> atau <strong>Simpan ke Laporan & Drive</strong>.
+                  </span>
+                </div>
               </div>
             )}
 
@@ -2138,7 +2173,7 @@ export default function JurnalPage() {
               </div>
             </div>
 
-            {/* Footer */}
+            {/* Footer Halaman 1 */}
             <div
               style={{
                 marginTop: '3rem',
@@ -2151,8 +2186,113 @@ export default function JurnalPage() {
               }}
             >
               <span>KeepNoteAI - Badan Pusat Statistik RI</span>
-              <span>Halaman 1</span>
+              <span>Halaman 1 (Laporan Utama)</span>
             </div>
+
+            {/* SEPARATOR & LAMPIRAN PDF PAGES VISUALIZATION */}
+            {lampiranList.filter(l => l.tipe === 'application/pdf' || l.nama?.toLowerCase().endsWith('.pdf') || l.dataUrl?.startsWith('data:application/pdf')).map((att, idx) => (
+              <div
+                key={`preview-pdf-${att.id}`}
+                style={{
+                  marginTop: '2.5rem',
+                  paddingTop: '2rem',
+                  borderTop: '2px dashed #94a3b8',
+                }}
+              >
+                <div
+                  style={{
+                    background: '#f8fafc',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '8px',
+                    padding: '12px 16px',
+                    marginBottom: '1rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <div
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.12)',
+                        color: '#dc2626',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        fontWeight: 800,
+                        fontSize: '11px',
+                      }}
+                    >
+                      LAMPIRAN {idx + 1}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
+                        {att.nama}
+                      </div>
+                      <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                        {att.keterangan || 'Dokumen lampiran PDF pendukung kegiatan'} {att.ukuran ? `(${Math.round(att.ukuran / 1024)} KB)` : ''}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => previewLampiran(att)}
+                    className="btn glass"
+                    style={{
+                      padding: '0.35rem 0.85rem',
+                      fontSize: '0.78rem',
+                      width: 'auto',
+                      background: 'rgba(59, 130, 246, 0.1)',
+                      color: '#0284c7',
+                      borderColor: 'rgba(59, 130, 246, 0.3)',
+                    }}
+                  >
+                    <ExternalLink size={13} />
+                    <span>Lihat Dokumen Asli</span>
+                  </button>
+                </div>
+
+                {/* Embedded PDF iframe / viewer if dataUrl is available */}
+                {att.dataUrl && (
+                  <div
+                    style={{
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      overflow: 'hidden',
+                      height: '520px',
+                      background: '#525659',
+                    }}
+                  >
+                    <iframe
+                      src={att.dataUrl}
+                      title={`Lampiran ${idx + 1}: ${att.nama}`}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        border: 'none',
+                      }}
+                    />
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    marginTop: '1rem',
+                    borderTop: '1px solid #e2e8f0',
+                    paddingTop: '6px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: '11px',
+                    color: '#94a3b8',
+                  }}
+                >
+                  <span>KeepNoteAI - Badan Pusat Statistik RI</span>
+                  <span>Halaman Lampiran {idx + 1} (Tergabung)</span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
