@@ -1077,52 +1077,37 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
     const activeRk = await getActiveRencana(user);
 
     let kegiatan = caption?.trim();
-    let capaian = kegiatan ? deriveDefaultCapaian(kegiatan) : 'Tercapai sesuai target.';
+    if (!kegiatan) {
+      await sendMsg(
+        chatId,
+        '📸 *Foto bukti kegiatan berhasil diterima!*\n\n' +
+        '⚠️ Silakan kirimkan foto *disertai caption/keterangan kegiatan* untuk membuat laporan harian,\n' +
+        'atau ketik `/jurnal` untuk menyusun Jurnal Kerja Harian resmi (PDF ber-Kop BPS & multi-foto).'
+      );
+      return;
+    }
+
+    let capaian = deriveDefaultCapaian(kegiatan);
     const isAiPolish = user.telegramAiPolish !== false;
 
-    if (kegiatan) {
-      if (isAiPolish) {
-        await sendMsg(chatId, '🧠 AI merapikan deskripsi kegiatan & capaian...');
-        try {
-          const systemPrompt = getBpsReportSystemPrompt({
-            tim: activeRk?.timNama,
-            rencana: activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined,
-            iki: activeRk?.iki || undefined,
-          });
-          const aiResult = await callAI([
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: kegiatan },
-          ]);
-          if (aiResult.kegiatan) {
-            kegiatan = aiResult.kegiatan;
-            capaian = aiResult.capaian || deriveDefaultCapaian(kegiatan);
-          }
-        } catch (err) {
-          console.error('AI polish error:', err);
-        }
-      }
-    } else {
-      if (isAiPolish) {
-        await sendMsg(chatId, '🧠 AI menganalisis gambar...');
-        const base64 = buffer.toString('base64');
-        const systemPrompt = getBpsImageSystemPrompt(activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined);
-        const visionModel = process.env.AI_VISION_MODEL || 'google/gemini-2.0-flash-lite-preview-02-05:free';
+    if (isAiPolish) {
+      await sendMsg(chatId, '🧠 AI merapikan deskripsi kegiatan & capaian...');
+      try {
+        const systemPrompt = getBpsReportSystemPrompt({
+          tim: activeRk?.timNama,
+          rencana: activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined,
+          iki: activeRk?.iki || undefined,
+        });
         const aiResult = await callAI([
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: [
-            { type: 'text', text: 'Analisis bukti dokumen/foto kegiatan pegawai BPS ini dan rumuskan deskripsi kegiatan serta capaian formalnya.' },
-            { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } }
-          ]},
-        ], true, visionModel);
-        kegiatan = aiResult.kegiatan;
-        capaian = aiResult.capaian || (kegiatan ? deriveDefaultCapaian(kegiatan) : 'Tercapai sesuai target.');
-        if (!kegiatan) {
-          await sendMsg(chatId, '❌ Tidak ada deskripsi terdeteksi. Kirim foto dengan caption atau ketik deskripsi kegiatan.');
-          return;
+          { role: 'user', content: kegiatan },
+        ]);
+        if (aiResult.kegiatan) {
+          kegiatan = aiResult.kegiatan;
+          capaian = aiResult.capaian || deriveDefaultCapaian(kegiatan);
         }
-      } else {
-        await sendMsg(chatId, '⚠️ *Mode tanpa AI aktif*: Silakan kirim foto/dokumen disertai caption deskripsi kegiatan, atau ketik `/ai on` untuk mengaktifkan analisis AI otomatis.');
-        return;
+      } catch (err) {
+        console.error('AI polish error:', err);
       }
     }
 
