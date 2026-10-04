@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, date, integer, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, date, integer, boolean, primaryKey } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -20,6 +20,19 @@ export const telegramUpdates = pgTable('telegram_updates', {
   messageId: text('message_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+export const telegramSessions = pgTable(
+  'telegram_sessions',
+  {
+    chatId: text('chat_id').notNull(),
+    sessionType: text('session_type').notNull(),
+    data: text('data').notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.chatId, table.sessionType] }),
+  ]
+);
 
 export const timKerja = pgTable('tim_kerja', {
   id: uuid('id').primaryKey().defaultRandom(),

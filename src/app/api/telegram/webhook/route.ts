@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { users, masterRencana, timKerja, laporan, telegramUpdates, userSettings } from '@/db/schema';
-import { eq, and, gt } from 'drizzle-orm';
-import { getBpsReportSystemPrompt, getBpsImageSystemPrompt, polishDailyDossier } from '@/lib/ai';
+import { users, masterRencana, timKerja, laporan, telegramUpdates, userSettings, telegramSessions } from '@/db/schema';
+import { eq, and, gt, sql } from 'drizzle-orm';
+import { getBpsReportSystemPrompt, polishDailyDossier } from '@/lib/ai';
 import { generateDailyDossierPdf } from '@/lib/daily-dossier-pdf';
 import { generateDailyDossierDocx } from '@/lib/daily-dossier-docx';
 import { DossierDocumentPayload } from '@/lib/validations';
@@ -24,7 +24,6 @@ async function sendMsg(chatId: string | number, text: string, extra?: any) {
     });
     const data = await res.json().catch(() => ({}));
     if (!data.ok && data.description?.toLowerCase().includes('parse')) {
-      // Fallback without parse_mode if markdown has formatting collision
       return fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -104,8 +103,8 @@ function formatDateIndo(dateStr: string): string {
   }
 }
 
-// In-Memory Sessions & Drafts
-interface PendingDraft {
+// Database-Backed Sessions & Drafts
+export interface PendingDraft {
   id: string;
   userId: string;
   chatId: string;
@@ -120,7 +119,7 @@ interface PendingDraft {
   createdAt: number;
 }
 
-interface JurnalWizardSession {
+export interface JurnalWizardSession {
   userId: string;
   chatId: string;
   step: 'step_title' | 'step_datetime' | 'step_datetime_input' | 'step_description' | 'step_rk' | 'step_photos' | 'step_signature';
@@ -139,24 +138,108 @@ interface JurnalWizardSession {
   createdAt: number;
 }
 
-interface UserSessionState {
+export interface UserSessionState {
   state: 'waiting_custom_capaian' | 'in_jurnal_wizard';
   draftId?: string;
 }
 
-const g = globalThis as unknown as {
-  __tgPendingDrafts?: Map<string, PendingDraft>;
-  __tgJurnalSessions?: Map<string, JurnalWizardSession>;
-  __tgUserStates?: Map<string, UserSessionState>;
-};
+async function ensureSessionsTable() {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS telegram_sessions (
+        chat_id text NOT NULL,
+        session_type text NOT NULL,
+        data text NOT NULL,
+        updated_at timestamp NOT NULL DEFAULT now(),
+        PRIMARY KEY (chat_id, session_type)
+      );
+    `);
+  } catch {}
+}
 
-if (!g.__tgPendingDrafts) g.__tgPendingDrafts = new Map<string, PendingDraft>();
-if (!g.__tgJurnalSessions) g.__tgJurnalSessions = new Map<string, JurnalWizardSession>();
-if (!g.__tgUserStates) g.__tgUserStates = new Map<string, UserSessionState>();
+async function getTgSession<T>(chatId: string, sessionType: string): Promise<T | null> {
+  try {
+    const [row] = await db
+      .select()
+      .from(telegramSessions)
+      .where(and(eq(telegramSessions.chatId, chatId), eq(telegramSessions.sessionType, sessionType)))
+      .limit(1);
+    if (row?.data) {
+      return JSON.parse(row.data) as T;
+    }
+  } catch {
+    await ensureSessionsTable();
+    try {
+      const [row] = await db
+        .select()
+        .from(telegramSessions)
+        .where(and(eq(telegramSessions.chatId, chatId), eq(telegramSessions.sessionType, sessionType)))
+        .limit(1);
+      if (row?.data) {
+        return JSON.parse(row.data) as T;
+      }
+    } catch {}
+  }
+  return null;
+}
 
-const pendingDrafts = g.__tgPendingDrafts;
-const jurnalSessions = g.__tgJurnalSessions;
-const userStates = g.__tgUserStates;
+async function setTgSession(chatId: string, sessionType: string, data: any) {
+  const dataStr = JSON.stringify(data);
+  try {
+    await db
+      .insert(telegramSessions)
+      .values({
+        chatId,
+        sessionType,
+        data: dataStr,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [telegramSessions.chatId, telegramSessions.sessionType],
+        set: {
+          data: dataStr,
+          updatedAt: new Date(),
+        },
+      });
+  } catch {
+    await ensureSessionsTable();
+    try {
+      await db
+        .insert(telegramSessions)
+        .values({
+          chatId,
+          sessionType,
+          data: dataStr,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [telegramSessions.chatId, telegramSessions.sessionType],
+          set: {
+            data: dataStr,
+            updatedAt: new Date(),
+          },
+        });
+    } catch (e) {
+      console.error('Failed to setTgSession:', e);
+    }
+  }
+}
+
+async function deleteTgSession(chatId: string, sessionType?: string) {
+  try {
+    if (sessionType) {
+      await db
+        .delete(telegramSessions)
+        .where(and(eq(telegramSessions.chatId, chatId), eq(telegramSessions.sessionType, sessionType)));
+    } else {
+      await db
+        .delete(telegramSessions)
+        .where(eq(telegramSessions.chatId, chatId));
+    }
+  } catch (e) {
+    console.error('Failed to deleteTgSession:', e);
+  }
+}
 
 async function getUser(chatId: string) {
   const [user] = await db.select().from(users).where(eq(users.telegramChatId, chatId)).limit(1);
@@ -465,8 +548,8 @@ async function saveReportDraftToDb(chatId: string, draft: PendingDraft, finalCap
       buktiUrls: draft.buktiUrls,
     });
 
-    pendingDrafts.delete(chatId);
-    userStates.delete(chatId);
+    await deleteTgSession(chatId, 'draft');
+    await deleteTgSession(chatId, 'state');
 
     const modeTag = draft.isAiPolish ? '' : '\n_Mode tanpa AI (teks asli dicatat langsung)_';
     const confirmMsg =
@@ -624,7 +707,7 @@ export async function POST(req: NextRequest) {
 
     // B. Daily Report Draft & Capaian Callbacks
     if (data === 'draft:save_ai') {
-      const draft = pendingDrafts.get(cbChatId);
+      const draft = await getTgSession<PendingDraft>(cbChatId, 'draft');
       if (!draft) {
         await answerCallbackQuery(cb.id, 'Draft sudah kedaluwarsa.');
         if (cbMsgId) await editMsgText(cbChatId, cbMsgId, '⚠️ Draft sudah kedaluwarsa atau telah disimpan.');
@@ -636,12 +719,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (data === 'draft:manual_capaian') {
-      const draft = pendingDrafts.get(cbChatId);
+      const draft = await getTgSession<PendingDraft>(cbChatId, 'draft');
       if (!draft) {
         await answerCallbackQuery(cb.id, 'Draft sudah kedaluwarsa.');
         return NextResponse.json({ ok: true });
       }
-      userStates.set(cbChatId, { state: 'waiting_custom_capaian', draftId: draft.id });
+      await setTgSession(cbChatId, 'state', { state: 'waiting_custom_capaian', draftId: draft.id });
       await answerCallbackQuery(cb.id);
       const promptText =
         `✏️ *Tulis Capaian Kegiatan Anda Sendiri*\n\n` +
@@ -660,8 +743,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (data === 'draft:cancel') {
-      pendingDrafts.delete(cbChatId);
-      userStates.delete(cbChatId);
+      await deleteTgSession(cbChatId, 'draft');
+      await deleteTgSession(cbChatId, 'state');
       await answerCallbackQuery(cb.id, 'Dibatalkan');
       if (cbMsgId) await editMsgText(cbChatId, cbMsgId, '❌ Pembuatan laporan dibatalkan.');
       return NextResponse.json({ ok: true });
@@ -713,9 +796,7 @@ export async function POST(req: NextRequest) {
     const param = parts.slice(1).join(' ').trim();
 
     if (cmd === '/cancel' || cmd === '/batal') {
-      pendingDrafts.delete(chatId);
-      jurnalSessions.delete(chatId);
-      userStates.delete(chatId);
+      await deleteTgSession(chatId);
       await sendMsg(chatId, '❌ Aksi saat ini berhasil dibatalkan. Anda dapat mengirim kegiatan baru kapan saja.');
       return NextResponse.json({ ok: true });
     }
@@ -954,7 +1035,7 @@ export async function POST(req: NextRequest) {
         '🔌 `/unlink` — Putuskan koneksi\n' +
         '⏸ `/stop` — Jeda pembuatan laporan otomatis\n' +
         '▶️ `/lanjut` — Lanjutkan pembuatan laporan\n\n' +
-        '📸 *Kirim Foto/Dokumen* — Analisis bukti + konfirmasi pilihan capaian\n' +
+        '📸 *Kirim Foto/Dokumen* — Unggah bukti + konfirmasi pilihan capaian\n' +
         '📝 *Kirim Teks* — Catat kegiatan harian langsung'
       );
       return NextResponse.json({ ok: true });
@@ -1006,7 +1087,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ ok: true });
 
   // 2. Handle in-progress Jurnal Wizard Session
-  const activeJurnal = jurnalSessions.get(chatId);
+  const activeJurnal = await getTgSession<JurnalWizardSession>(chatId, 'jurnal');
   if (activeJurnal) {
     if (msg.photo) {
       await handleJurnalPhoto(chatId, user, msg.photo, caption, activeJurnal);
@@ -1020,9 +1101,9 @@ export async function POST(req: NextRequest) {
   }
 
   // 3. Handle waiting manual capaian state for daily report
-  const activeState = userStates.get(chatId);
+  const activeState = await getTgSession<UserSessionState>(chatId, 'state');
   if (activeState?.state === 'waiting_custom_capaian') {
-    const draft = pendingDrafts.get(chatId);
+    const draft = await getTgSession<PendingDraft>(chatId, 'draft');
     if (draft && text) {
       const customCapaian = text.trim();
       await saveReportDraftToDb(chatId, draft, customCapaian);
@@ -1169,9 +1250,8 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       console.error('Upload error:', e);
     }
 
-    // Save as Pending Draft and Ask user whether they want AI Capaian or custom manual Capaian
     const draftId = `draft_${Date.now()}`;
-    pendingDrafts.set(chatId, {
+    await setTgSession(chatId, 'draft', {
       id: draftId,
       userId: user.id,
       chatId,
@@ -1286,9 +1366,8 @@ async function handleText(chatId: string, user: any, text: string) {
   const tgl = parseTanggal(text) || new Date();
   const today = toISODate(tgl);
 
-  // Save as Pending Draft and Ask user whether they want AI Capaian or custom manual Capaian
   const draftId = `draft_${Date.now()}`;
-  pendingDrafts.set(chatId, {
+  await setTgSession(chatId, 'draft', {
     id: draftId,
     userId: user.id,
     chatId,
@@ -1330,14 +1409,12 @@ async function handleText(chatId: string, user: any, text: string) {
 // -------------------------------------------------------------
 
 async function startJurnalWizard(chatId: string, user: any, param?: string) {
-  // Clear any existing session
-  jurnalSessions.delete(chatId);
-  userStates.delete(chatId);
+  await deleteTgSession(chatId, 'jurnal');
+  await deleteTgSession(chatId, 'state');
 
   const today = toISODate(new Date());
   const activeRk = await getActiveRencana(user);
 
-  // If user provided direct description argument in "/jurnal <teks>"
   if (param && param.trim().length > 0 && param.trim().split(' ').length > 2 && !parseTanggal(param)) {
     const session: JurnalWizardSession = {
       userId: user.id,
@@ -1355,20 +1432,19 @@ async function startJurnalWizard(chatId: string, user: any, param?: string) {
       photos: [],
       createdAt: Date.now(),
     };
-    jurnalSessions.set(chatId, session);
 
-    // If active RK exists, advance directly to photos
     if (activeRk) {
       session.step = 'step_photos';
+      await setTgSession(chatId, 'jurnal', session);
       await sendStepPhotosPrompt(chatId, session);
       return;
     }
 
+    await setTgSession(chatId, 'jurnal', session);
     await sendStepRkPrompt(chatId, user, session);
     return;
   }
 
-  // Initialize new interactive session starting at Step 1: Judul
   const session: JurnalWizardSession = {
     userId: user.id,
     chatId,
@@ -1379,7 +1455,7 @@ async function startJurnalWizard(chatId: string, user: any, param?: string) {
     photos: [],
     createdAt: Date.now(),
   };
-  jurnalSessions.set(chatId, session);
+  await setTgSession(chatId, 'jurnal', session);
 
   const msg =
     `📖 *Penyusunan Jurnal Kerja Harian BPS (Dossier)*\n\n` +
@@ -1397,6 +1473,7 @@ async function startJurnalWizard(chatId: string, user: any, param?: string) {
 
 async function sendStepDateTimePrompt(chatId: string, session: JurnalWizardSession, msgId?: number) {
   session.step = 'step_datetime';
+  await setTgSession(chatId, 'jurnal', session);
   const today = session.tanggal || toISODate(new Date());
 
   const text =
@@ -1426,9 +1503,9 @@ async function sendStepDateTimePrompt(chatId: string, session: JurnalWizardSessi
 
 async function sendStepDescriptionPrompt(chatId: string, user: any, session: JurnalWizardSession, msgId?: number) {
   session.step = 'step_description';
+  await setTgSession(chatId, 'jurnal', session);
   const today = session.tanggal || toISODate(new Date());
 
-  // Check if user has daily reports recorded for today
   const existingReports = await db
     .select({ kegiatan: laporan.kegiatan, capaian: laporan.capaian })
     .from(laporan)
@@ -1462,6 +1539,7 @@ async function sendStepDescriptionPrompt(chatId: string, user: any, session: Jur
 
 async function sendStepRkPrompt(chatId: string, user: any, session: JurnalWizardSession, msgId?: number) {
   session.step = 'step_rk';
+  await setTgSession(chatId, 'jurnal', session);
   const list = await getUserRencana(user.id);
   const activeRk = await getActiveRencana(user);
 
@@ -1502,7 +1580,8 @@ async function sendStepRkPrompt(chatId: string, user: any, session: JurnalWizard
 
 async function sendStepPhotosPrompt(chatId: string, session: JurnalWizardSession, msgId?: number) {
   session.step = 'step_photos';
-  const count = session.photos.length;
+  await setTgSession(chatId, 'jurnal', session);
+  const count = session.photos?.length || 0;
 
   const text =
     `📸 *Langkah 5/5: Unggah Foto Dokumentasi Kegiatan (Multi-Foto)*\n\n` +
@@ -1537,7 +1616,7 @@ async function sendStepPhotosPrompt(chatId: string, session: JurnalWizardSession
 }
 
 async function handleJurnalCallback(chatId: string, user: any, data: string, cbId: string, cbMsgId?: number) {
-  const session = jurnalSessions.get(chatId);
+  const session = await getTgSession<JurnalWizardSession>(chatId, 'jurnal');
   if (!session) {
     await answerCallbackQuery(cbId, 'Sesi jurnal telah berakhir. Ketik /jurnal untuk mulai baru.');
     if (cbMsgId) await editMsgText(chatId, cbMsgId, '⚠️ Sesi telah berakhir. Ketik `/jurnal` untuk membuat jurnal baru.');
@@ -1545,8 +1624,8 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
   }
 
   if (data === 'j:cancel') {
-    jurnalSessions.delete(chatId);
-    userStates.delete(chatId);
+    await deleteTgSession(chatId, 'jurnal');
+    await deleteTgSession(chatId, 'state');
     await answerCallbackQuery(cbId, 'Dibatalkan');
     if (cbMsgId) await editMsgText(chatId, cbMsgId, '❌ Pembuatan Jurnal Kegiatan dibatalkan.');
     return;
@@ -1554,6 +1633,7 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
 
   if (data === 'j:title_std') {
     session.judul = 'Laporan Pelaksanaan Kegiatan Harian';
+    await setTgSession(chatId, 'jurnal', session);
     await answerCallbackQuery(cbId, 'Judul standar dipilih');
     await sendStepDateTimePrompt(chatId, session, cbMsgId);
     return;
@@ -1563,6 +1643,7 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
     session.tanggal = session.tanggal || toISODate(new Date());
     session.waktu = '08.00 - 16.00 WIB';
     session.tempat = 'Kantor BPS & Wilayah Tugas';
+    await setTgSession(chatId, 'jurnal', session);
     await answerCallbackQuery(cbId, 'Tanggal & Tempat default dipilih');
     await sendStepDescriptionPrompt(chatId, user, session, cbMsgId);
     return;
@@ -1570,6 +1651,7 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
 
   if (data === 'j:dt_custom') {
     session.step = 'step_datetime_input';
+    await setTgSession(chatId, 'jurnal', session);
     await answerCallbackQuery(cbId);
     const prompt =
       `📅 *Ketik Tanggal & Tempat Pelaksanaan Kegiatan:*\n\n` +
@@ -1605,6 +1687,7 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
       .map((r, i) => `${i + 1}. ${r.kegiatan} (Capaian: ${r.capaian})`)
       .join('\n');
 
+    session.photos = session.photos || [];
     for (const r of existingReports) {
       if (r.buktiUrls) {
         try {
@@ -1623,6 +1706,7 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
       }
     }
 
+    await setTgSession(chatId, 'jurnal', session);
     await answerCallbackQuery(cbId, `Memuat ${existingReports.length} kegiatan!`);
     await sendStepRkPrompt(chatId, user, session, cbMsgId);
     return;
@@ -1638,6 +1722,7 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
       session.rencanaKode = matched.kode;
       session.timNama = matched.timNama;
     }
+    await setTgSession(chatId, 'jurnal', session);
     await answerCallbackQuery(cbId, 'RK terpilih');
     await sendStepPhotosPrompt(chatId, session, cbMsgId);
     return;
@@ -1645,6 +1730,7 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
 
   if (data === 'j:add_sig') {
     session.step = 'step_signature';
+    await setTgSession(chatId, 'jurnal', session);
     await answerCallbackQuery(cbId);
     const sigMsg =
       `✍️ *Upload Tanda Tangan Digital*\n\n` +
@@ -1673,6 +1759,7 @@ async function handleJurnalCallback(chatId: string, user: any, data: string, cbI
 
   if (data === 'j:reset_photos') {
     session.photos = [];
+    await setTgSession(chatId, 'jurnal', session);
     await answerCallbackQuery(cbId, 'Foto direset.');
     await sendStepPhotosPrompt(chatId, session, cbMsgId);
     return;
@@ -1700,6 +1787,7 @@ async function handleJurnalText(chatId: string, user: any, text: string, session
 
   if (session.step === 'step_title') {
     session.judul = text.trim();
+    await setTgSession(chatId, 'jurnal', session);
     await sendStepDateTimePrompt(chatId, session);
     return;
   }
@@ -1715,20 +1803,22 @@ async function handleJurnalText(chatId: string, user: any, text: string, session
     } else if (!parsedDate) {
       session.tempat = text.trim();
     }
+    await setTgSession(chatId, 'jurnal', session);
     await sendStepDescriptionPrompt(chatId, user, session);
     return;
   }
 
   if (session.step === 'step_description') {
     session.rawDescription = text.trim();
+    await setTgSession(chatId, 'jurnal', session);
     await sendStepRkPrompt(chatId, user, session);
     return;
   }
 
   if (session.step === 'step_photos') {
-    // If user sends text during photo step, treat it as finishing or setting photo caption
-    if (session.photos.length > 0) {
+    if (session.photos && session.photos.length > 0) {
       session.photos[session.photos.length - 1].caption = text.trim();
+      await setTgSession(chatId, 'jurnal', session);
       await sendMsg(chatId, `📝 Caption foto terakhir diperbarui: "${text.trim()}".`);
       await sendStepPhotosPrompt(chatId, session);
     } else {
@@ -1738,9 +1828,9 @@ async function handleJurnalText(chatId: string, user: any, text: string, session
   }
 
   if (session.step === 'step_signature') {
-    // If text entered, could be NIP
     if (/^\d{10,}$/.test(text.replace(/\s+/g, ''))) {
       session.nipPelaksana = text.trim();
+      await setTgSession(chatId, 'jurnal', session);
       await sendMsg(chatId, `✅ NIP Pelaksana dicatat: ${session.nipPelaksana}`);
       await sendStepPhotosPrompt(chatId, session);
       return;
@@ -1776,12 +1866,13 @@ async function handleJurnalPhoto(
 
     if (session.step === 'step_signature') {
       session.tandaTanganUrl = dataUrl;
+      await setTgSession(chatId, 'jurnal', session);
       await sendMsg(chatId, '✍️ *Tanda tangan berhasil diunggah!*');
       await sendStepPhotosPrompt(chatId, session);
       return;
     }
 
-    // Add to photos array
+    session.photos = session.photos || [];
     const photoNumber = session.photos.length + 1;
     const finalCaption = caption?.trim() || `Dokumentasi Pelaksanaan Kegiatan - Foto ${photoNumber}`;
 
@@ -1789,6 +1880,7 @@ async function handleJurnalPhoto(
       dataUrl,
       caption: finalCaption,
     });
+    await setTgSession(chatId, 'jurnal', session);
 
     const msgText =
       `📸 *Foto ke-${photoNumber} berhasil ditambahkan!*\n` +
@@ -1868,7 +1960,7 @@ async function renderJurnalPdfAndSend(chatId: string, user: any, session: Jurnal
           ? dossierData.capaianOutput
           : ['Kegiatan terlaksana dengan baik.'],
       kendalaTindakLanjut: dossierData.kendalaTindakLanjut || undefined,
-      photos: session.photos,
+      photos: session.photos || [],
       tandaTanganUrl: session.tandaTanganUrl || undefined,
     };
 
@@ -1930,7 +2022,7 @@ async function renderJurnalPdfAndSend(chatId: string, user: any, session: Jurnal
       try {
         const buktiArr: string[] = [];
         if (pdfDriveLink) buktiArr.push(pdfDriveLink);
-        for (const p of session.photos) {
+        for (const p of (session.photos || [])) {
           if (p.dataUrl && p.dataUrl.startsWith('http') && !buktiArr.includes(p.dataUrl)) {
             buktiArr.push(p.dataUrl);
           }
@@ -1960,7 +2052,7 @@ async function renderJurnalPdfAndSend(chatId: string, user: any, session: Jurnal
       `📅 *Tanggal:* ${formatDateIndo(targetDate)}\n` +
       `👤 *Pelaksana:* ${user.name}\n` +
       `🎯 *Program:* ${payload.rencanaKinerja}\n` +
-      `📸 *Dokumentasi:* ${session.photos.length} Foto\n\n` +
+      `📸 *Dokumentasi:* ${(session.photos || []).length} Foto\n\n` +
       (pdfDriveLink ? `☁️ [Buka PDF di Google Drive](${pdfDriveLink})\n\n` : '') +
       `📄 _Dokumen PDF resmi ber-Kop BPS siap cetak._`;
 
@@ -1980,8 +2072,8 @@ async function renderJurnalPdfAndSend(chatId: string, user: any, session: Jurnal
     }
 
     // Clear session
-    jurnalSessions.delete(chatId);
-    userStates.delete(chatId);
+    await deleteTgSession(chatId, 'jurnal');
+    await deleteTgSession(chatId, 'state');
   } catch (err: any) {
     console.error('Error in renderJurnalPdfAndSend:', err);
     await sendMsg(chatId, `❌ Gagal memproses dokumen jurnal: ${err?.message || 'Terjadi kesalahan sistem.'}`);
