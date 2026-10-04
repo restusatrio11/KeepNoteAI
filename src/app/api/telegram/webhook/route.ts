@@ -104,6 +104,60 @@ function formatDateIndo(dateStr: string): string {
   }
 }
 
+// In-Memory Sessions & Drafts
+interface PendingDraft {
+  id: string;
+  userId: string;
+  chatId: string;
+  rencanaId: string;
+  rencanaNama: string;
+  rencanaKode: string;
+  kegiatan: string;
+  aiCapaian: string;
+  tanggal: string;
+  buktiUrls: string | null;
+  isAiPolish: boolean;
+  createdAt: number;
+}
+
+interface JurnalWizardSession {
+  userId: string;
+  chatId: string;
+  step: 'step_title' | 'step_datetime' | 'step_datetime_input' | 'step_description' | 'step_rk' | 'step_photos' | 'step_signature';
+  judul?: string;
+  tanggal?: string;
+  waktu?: string;
+  tempat?: string;
+  rawDescription?: string;
+  rencanaId?: string;
+  rencanaNama?: string;
+  rencanaKode?: string;
+  timNama?: string;
+  photos: { dataUrl: string; caption: string }[];
+  tandaTanganUrl?: string | null;
+  nipPelaksana?: string;
+  createdAt: number;
+}
+
+interface UserSessionState {
+  state: 'waiting_custom_capaian' | 'in_jurnal_wizard';
+  draftId?: string;
+}
+
+const g = globalThis as unknown as {
+  __tgPendingDrafts?: Map<string, PendingDraft>;
+  __tgJurnalSessions?: Map<string, JurnalWizardSession>;
+  __tgUserStates?: Map<string, UserSessionState>;
+};
+
+if (!g.__tgPendingDrafts) g.__tgPendingDrafts = new Map<string, PendingDraft>();
+if (!g.__tgJurnalSessions) g.__tgJurnalSessions = new Map<string, JurnalWizardSession>();
+if (!g.__tgUserStates) g.__tgUserStates = new Map<string, UserSessionState>();
+
+const pendingDrafts = g.__tgPendingDrafts;
+const jurnalSessions = g.__tgJurnalSessions;
+const userStates = g.__tgUserStates;
+
 async function getUser(chatId: string) {
   const [user] = await db.select().from(users).where(eq(users.telegramChatId, chatId)).limit(1);
   return user || null;
@@ -198,7 +252,6 @@ function buildRkListView({
 
   msg += `👉 *Sentuh nomor tombol di bawah untuk memilih RK:*`;
 
-  // Numbered buttons grid (up to 3 per row for large touch targets)
   const inlineKeyboard: any[] = [];
   let row: any[] = [];
 
@@ -222,7 +275,6 @@ function buildRkListView({
     inlineKeyboard.push(row);
   }
 
-  // Navigation Row (if multiple pages)
   const navRow: any[] = [];
   if (currentPage > 1) {
     navRow.push({
@@ -240,7 +292,6 @@ function buildRkListView({
     inlineKeyboard.push(navRow);
   }
 
-  // Filter & Action Buttons
   const actionRow: any[] = [];
   if (timList.length > 1) {
     actionRow.push({
@@ -331,7 +382,6 @@ async function callAI(messages: any[], expectJson = true, modelOverride?: string
   }
 
   let raw = data.choices?.[0]?.message?.content || '';
-  // Strip reasoning tokens (<think>...</think>) if present
   raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   if (!expectJson) return { kegiatan: raw };
   const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*$/g, '').trim();
@@ -356,10 +406,92 @@ async function callAI(messages: any[], expectJson = true, modelOverride?: string
   }
 }
 
+function parseTanggal(input: string): Date | null {
+  if (!input) return null;
+  const bulan: Record<string, number> = {
+    januari: 0, februari: 1, maret: 2, april: 3, mei: 4, juni: 5,
+    juli: 6, agustus: 7, september: 8, oktober: 9, november: 10, desember: 11,
+  };
+  const m1 = input.match(/\b(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+(\d{4})\b/i);
+  if (m1) {
+    const d = parseInt(m1[1], 10), mo = bulan[m1[2].toLowerCase()], y = parseInt(m1[3], 10);
+    if (d >= 1 && d <= 31 && mo !== undefined) return new Date(y, mo, d);
+  }
+  const m2 = input.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/);
+  if (m2) {
+    const d = parseInt(m2[1], 10), mo = parseInt(m2[2], 10) - 1, y = parseInt(m2[3], 10);
+    if (d >= 1 && d <= 31 && mo >= 0 && mo <= 11) return new Date(y, mo, d);
+  }
+  return null;
+}
+
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+async function getActiveRencana(user: any) {
+  if (user.selectedRencanaId) {
+    const [r] = await db
+      .select({
+        id: masterRencana.id,
+        nama: masterRencana.nama,
+        kode: masterRencana.kode,
+        iki: masterRencana.iki,
+        timId: masterRencana.timId,
+        timNama: timKerja.nama,
+      })
+      .from(masterRencana)
+      .leftJoin(timKerja, eq(masterRencana.timId, timKerja.id))
+      .where(eq(masterRencana.id, user.selectedRencanaId as any))
+      .limit(1);
+    if (r) return r;
+  }
+  return null;
+}
+
+async function saveReportDraftToDb(chatId: string, draft: PendingDraft, finalCapaian: string, messageId?: number) {
+  try {
+    await db.insert(laporan).values({
+      userId: draft.userId as any,
+      tanggalMulai: draft.tanggal,
+      tanggalSelesai: draft.tanggal,
+      rencanaId: draft.rencanaId as any,
+      kegiatan: draft.kegiatan,
+      progress: 100,
+      capaian: finalCapaian,
+      buktiUrls: draft.buktiUrls,
+    });
+
+    pendingDrafts.delete(chatId);
+    userStates.delete(chatId);
+
+    const modeTag = draft.isAiPolish ? '' : '\n_Mode tanpa AI (teks asli dicatat langsung)_';
+    const confirmMsg =
+      `✅ *Laporan Berhasil Disimpan!*\n\n` +
+      `📌 *Program:* ${draft.rencanaNama} (\`${draft.rencanaKode}\`)\n` +
+      `📝 *Kegiatan:* ${draft.kegiatan}\n` +
+      `🎯 *Capaian:* ${finalCapaian}\n` +
+      `⚡ *Progres:* 100%${modeTag}\n\n` +
+      `📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`;
+
+    if (messageId) {
+      await editMsgText(chatId, messageId, confirmMsg);
+    } else {
+      await sendMsg(chatId, confirmMsg);
+    }
+  } catch (err: any) {
+    console.error('Error saving report draft:', err);
+    await sendMsg(chatId, `❌ Gagal menyimpan laporan: ${err?.message || 'Terjadi kesalahan'}`);
+  }
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
-  // 1. Handle Callback Query (e.g. interactive inline buttons for choosing RK)
+  // 1. Handle Callback Query (inline buttons)
   const cb = body?.callback_query;
   if (cb) {
     const cbChatId = String(cb.message?.chat?.id || cb.from?.id);
@@ -372,9 +504,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // A. RK Selection Callbacks
     if (data.startsWith('setrk:')) {
       const targetId = data.replace('setrk:', '');
-
       if (targetId === 'auto') {
         await db
           .update(users)
@@ -490,6 +622,57 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // B. Daily Report Draft & Capaian Callbacks
+    if (data === 'draft:save_ai') {
+      const draft = pendingDrafts.get(cbChatId);
+      if (!draft) {
+        await answerCallbackQuery(cb.id, 'Draft sudah kedaluwarsa.');
+        if (cbMsgId) await editMsgText(cbChatId, cbMsgId, '⚠️ Draft sudah kedaluwarsa atau telah disimpan.');
+        return NextResponse.json({ ok: true });
+      }
+      await answerCallbackQuery(cb.id, '✅ Menyimpan dengan Capaian AI...');
+      await saveReportDraftToDb(cbChatId, draft, draft.aiCapaian, cbMsgId);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (data === 'draft:manual_capaian') {
+      const draft = pendingDrafts.get(cbChatId);
+      if (!draft) {
+        await answerCallbackQuery(cb.id, 'Draft sudah kedaluwarsa.');
+        return NextResponse.json({ ok: true });
+      }
+      userStates.set(cbChatId, { state: 'waiting_custom_capaian', draftId: draft.id });
+      await answerCallbackQuery(cb.id);
+      const promptText =
+        `✏️ *Tulis Capaian Kegiatan Anda Sendiri*\n\n` +
+        `📌 *Program:* ${draft.rencanaNama}\n` +
+        `📝 *Kegiatan:* ${draft.kegiatan}\n\n` +
+        `Silakan ketik dan kirimkan kalimat capaian/output kegiatan Anda sekarang.\n` +
+        `_Contoh: Terlaksananya pengolahan dan validasi 30 dokumen Sakernas._\n\n` +
+        `_Ketik /batal jika ingin membatalkan._`;
+
+      if (cbMsgId) {
+        await editMsgText(cbChatId, cbMsgId, promptText);
+      } else {
+        await sendMsg(cbChatId, promptText);
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    if (data === 'draft:cancel') {
+      pendingDrafts.delete(cbChatId);
+      userStates.delete(cbChatId);
+      await answerCallbackQuery(cb.id, 'Dibatalkan');
+      if (cbMsgId) await editMsgText(cbChatId, cbMsgId, '❌ Pembuatan laporan dibatalkan.');
+      return NextResponse.json({ ok: true });
+    }
+
+    // C. Jurnal Interactive Wizard Callbacks
+    if (data.startsWith('j:')) {
+      await handleJurnalCallback(cbChatId, cbUser, data, cb.id, cbMsgId);
+      return NextResponse.json({ ok: true });
+    }
+
     await answerCallbackQuery(cb.id);
     return NextResponse.json({ ok: true });
   }
@@ -497,8 +680,7 @@ export async function POST(req: NextRequest) {
   const msg = body?.message;
   if (!msg) return NextResponse.json({ ok: true });
 
-  // Deduplikasi: cegah Telegram mengirim ulang update yang sama
-  // (mis. karena webhook lambat) membuat laporan duplikat/spam.
+  // Deduplikasi Telegram updates
   const updateId =
     body.update_id != null
       ? String(body.update_id)
@@ -514,11 +696,9 @@ export async function POST(req: NextRequest) {
       .onConflictDoNothing()
       .returning();
     if (inserted.length === 0) {
-      // Update sudah pernah diproses -> abaikan (balas 200 agar tidak dikirim ulang)
       return NextResponse.json({ ok: true });
     }
   } catch (e) {
-    // Kalau tabel belum ada, lanjutkan saja (tidak memblokir)
     console.error('Telegram dedupe error:', e);
   }
 
@@ -526,10 +706,19 @@ export async function POST(req: NextRequest) {
   const text = msg.text || '';
   const caption = msg.caption || '';
 
+  // Handle Slash Commands
   if (text.startsWith('/')) {
     const parts = text.split(' ');
     const cmd = parts[0];
     const param = parts.slice(1).join(' ').trim();
+
+    if (cmd === '/cancel' || cmd === '/batal') {
+      pendingDrafts.delete(chatId);
+      jurnalSessions.delete(chatId);
+      userStates.delete(chatId);
+      await sendMsg(chatId, '❌ Aksi saat ini berhasil dibatalkan. Anda dapat mengirim kegiatan baru kapan saja.');
+      return NextResponse.json({ ok: true });
+    }
 
     if (cmd === '/link' && param) {
       const [found] = await db.select().from(users)
@@ -548,7 +737,7 @@ export async function POST(req: NextRequest) {
 
         await sendMsg(chatId,
           `✅ *Berhasil terhubung!* Halo *${found.name}*!\n\n` +
-          `Sekarang kirim foto, dokumen, atau teks kegiatan untuk membuat laporan otomatis.`
+          `Sekarang Anda dapat mengirim foto, dokumen, atau teks kegiatan untuk membuat laporan otomatis, atau ketik \`/jurnal\` untuk membuat Jurnal Kerja Harian resmi (PDF ber-Kop BPS).`
         );
       } else {
         await sendMsg(chatId, '❌ Kode tidak valid atau sudah kedaluwarsa. Generate ulang dari halaman Settings.');
@@ -559,11 +748,18 @@ export async function POST(req: NextRequest) {
     if (cmd === '/start') {
       const existing = await getUser(chatId);
       if (existing) {
-        await sendMsg(chatId, `👋 Halo *${existing.name}*! Akun sudah terhubung. Kirim kegiatan untuk membuat laporan.`);
+        await sendMsg(chatId,
+          `👋 Halo *${existing.name}*! Akun KeepNoteAI Anda telah aktif dan terhubung.\n\n` +
+          `Pilihan Cepat:\n` +
+          `• 📝 Kirim teks/foto kegiatan untuk membuat laporan harian e-Kinerja (bisa pilih rumusan Capaian AI atau tulis sendiri).\n` +
+          `• 📄 Ketik \`/jurnal\` untuk menyusun Jurnal Kerja Harian resmi BPS ber-Kop, multi-foto dokumentasi, dan tanda tangan (PDF & Word).\n` +
+          `• 🎯 Ketik \`/rk\` untuk melihat/memilih Rencana Kinerja aktif.\n` +
+          `• 🤖 Ketik \`/ai\` untuk mengatur fitur AI merapikan.`
+        );
       } else {
         await sendMsg(chatId,
           '👋 Halo! Untuk menghubungkan akun:\n\n' +
-          '1. Buka *Settings* di web KipApp\n' +
+          '1. Buka *Settings* di web KipApp / KeepNoteAI\n' +
           '2. Klik *"Generate Kode"*\n' +
           '3. Ketik /link <kode> di sini\n\n' +
           'Contoh: `/link ABC123`'
@@ -588,7 +784,6 @@ export async function POST(req: NextRequest) {
       if (param) {
         const cleanParam = param.trim().toLowerCase();
 
-        // 1. Reset / Auto detection
         if (cleanParam === 'auto' || cleanParam === 'reset' || cleanParam === 'otomatis') {
           await db
             .update(users)
@@ -603,7 +798,6 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ ok: true });
         }
 
-        // 2. Short number shortcut: e.g. "/rk 1", "/rk 2"
         const numIndex = parseInt(cleanParam);
         let matched: any = null;
 
@@ -611,12 +805,10 @@ export async function POST(req: NextRequest) {
           matched = list[numIndex - 1];
         }
 
-        // 3. Exact code match
         if (!matched) {
           matched = list.find((r: any) => r.kode?.toLowerCase() === cleanParam);
         }
 
-        // 4. Keyword / Name partial search
         if (!matched) {
           const candidates = list.filter((r: any) =>
             r.nama.toLowerCase().includes(cleanParam) ||
@@ -680,7 +872,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // No param: Show full paginated list with numbered keypad buttons
       const timList = await getUserTim(user.id);
       const view = buildRkListView({
         list,
@@ -744,27 +935,27 @@ export async function POST(req: NextRequest) {
         await sendMsg(chatId, '❌ Akun belum terhubung. Ketik /start untuk menghubungkan akun.');
         return NextResponse.json({ ok: true });
       }
-      await handleGenerateJurnal(chatId, u, param);
+      await startJurnalWizard(chatId, u, param);
       return NextResponse.json({ ok: true });
     }
 
     if (cmd === '/help') {
       await sendMsg(chatId,
         '📋 *Bantuan Bot KeepNoteAI*\n\n' +
-        '🔗 /link KODE — Hubungkan akun\n' +
-        '🎯 /rk — Pilih RK (tombol interaktif, nomor /rk 1, atau cari nama /rk sakernas)\n' +
-        '🤖 /rk auto — Deteksi otomatis target RK oleh AI\n' +
-        '🤖 /ai — Cek status fitur AI merapikan\n' +
-        '✨ /ai on — Aktifkan AI merapikan deskripsi\n' +
-        '📝 /ai off — Nonaktifkan AI (catat teks asli langsung)\n' +
-        '📄 /jurnal — Generate Jurnal Kerja Harian resmi (PDF & Word)\n' +
-        '📄 /jurnal <teks> — Buat jurnal langsung dari catatan cepat\n' +
-        '🔍 /status — Cek status koneksi & fitur\n' +
-        '🔌 /unlink — Putuskan koneksi\n' +
-        '⏸ /stop — Jeda pembuatan laporan otomatis\n' +
-        '▶️ /lanjut — Lanjutkan pembuatan laporan\n\n' +
-        '📸 Kirim *foto/dokumen* — Analisis / simpan bukti + buat laporan\n' +
-        '📝 Kirim *teks* — Catat kegiatan'
+        '🔗 `/link KODE` — Hubungkan akun\n' +
+        '🎯 `/rk` — Pilih RK (tombol interaktif, nomor /rk 1, atau cari nama /rk sakernas)\n' +
+        '🤖 `/rk auto` — Deteksi otomatis target RK oleh AI\n' +
+        '🤖 `/ai` — Cek status fitur AI merapikan\n' +
+        '✨ `/ai on` — Aktifkan AI merapikan deskripsi & capaian\n' +
+        '📝 `/ai off` — Nonaktifkan AI (catat teks asli langsung)\n' +
+        '📖 `/jurnal` — Panduan interaktif penyusunan Jurnal Kerja Harian (PDF & Word, multi-foto, TTD)\n' +
+        '❌ `/batal` — Membatalkan proses wizard atau draft saat ini\n' +
+        '🔍 `/status` — Cek status koneksi & RK aktif\n' +
+        '🔌 `/unlink` — Putuskan koneksi\n' +
+        '⏸ `/stop` — Jeda pembuatan laporan otomatis\n' +
+        '▶️ `/lanjut` — Lanjutkan pembuatan laporan\n\n' +
+        '📸 *Kirim Foto/Dokumen* — Analisis bukti + konfirmasi pilihan capaian\n' +
+        '📝 *Kirim Teks* — Catat kegiatan harian langsung'
       );
       return NextResponse.json({ ok: true });
     }
@@ -778,7 +969,7 @@ export async function POST(req: NextRequest) {
         let s = `✅ Terhubung sebagai *${user.name}* (${user.email})`;
         s += `\n🤖 AI Merapikan: *${user.telegramAiPolish !== false ? 'Aktif' : 'Nonaktif'}* (ketik /ai)`;
         if (activeRk) s += `\n🎯 RK aktif: *${activeRk.kode}* — ${activeRk.nama}`;
-        else s += '\nℹ️ Belum pilih RK. Ketik /rk untuk lihat daftar.';
+        else s += '\nℹ️ Target RK: *Deteksi Otomatis AI*. Ketik /rk untuk pilih RK spesifik.';
         await sendMsg(chatId, s);
       } else {
         await sendMsg(chatId, '❌ Belum terhubung. Ketik /start untuk bantuan.');
@@ -814,6 +1005,32 @@ export async function POST(req: NextRequest) {
   const user = await getUser(chatId);
   if (!user) return NextResponse.json({ ok: true });
 
+  // 2. Handle in-progress Jurnal Wizard Session
+  const activeJurnal = jurnalSessions.get(chatId);
+  if (activeJurnal) {
+    if (msg.photo) {
+      await handleJurnalPhoto(chatId, user, msg.photo, caption, activeJurnal);
+      return NextResponse.json({ ok: true });
+    }
+    if (text) {
+      await handleJurnalText(chatId, user, text, activeJurnal);
+      return NextResponse.json({ ok: true });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  // 3. Handle waiting manual capaian state for daily report
+  const activeState = userStates.get(chatId);
+  if (activeState?.state === 'waiting_custom_capaian') {
+    const draft = pendingDrafts.get(chatId);
+    if (draft && text) {
+      const customCapaian = text.trim();
+      await saveReportDraftToDb(chatId, draft, customCapaian);
+      return NextResponse.json({ ok: true });
+    }
+  }
+
+  // 4. Handle regular File/Photo or Text messages for Daily Report
   if (msg.photo) {
     const fileId = msg.photo[msg.photo.length - 1].file_id;
     await handleFile(chatId, user, fileId, caption);
@@ -833,51 +1050,9 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-function parseTanggal(input: string): Date | null {
-  if (!input) return null;
-  const bulan: Record<string, number> = {
-    januari: 0, februari: 1, maret: 2, april: 3, mei: 4, juni: 5,
-    juli: 6, agustus: 7, september: 8, oktober: 9, november: 10, desember: 11,
-  };
-  const m1 = input.match(/\b(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+(\d{4})\b/i);
-  if (m1) {
-    const d = parseInt(m1[1], 10), mo = bulan[m1[2].toLowerCase()], y = parseInt(m1[3], 10);
-    if (d >= 1 && d <= 31 && mo !== undefined) return new Date(y, mo, d);
-  }
-  const m2 = input.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})\b/);
-  if (m2) {
-    const d = parseInt(m2[1], 10), mo = parseInt(m2[2], 10) - 1, y = parseInt(m2[3], 10);
-    if (d >= 1 && d <= 31 && mo >= 0 && mo <= 11) return new Date(y, mo, d);
-  }
-  return null;
-}
-
-function toISODate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-async function getActiveRencana(user: any) {
-  if (user.selectedRencanaId) {
-    const [r] = await db
-      .select({
-        id: masterRencana.id,
-        nama: masterRencana.nama,
-        kode: masterRencana.kode,
-        iki: masterRencana.iki,
-        timId: masterRencana.timId,
-        timNama: timKerja.nama,
-      })
-      .from(masterRencana)
-      .leftJoin(timKerja, eq(masterRencana.timId, timKerja.id))
-      .where(eq(masterRencana.id, user.selectedRencanaId as any))
-      .limit(1);
-    if (r) return r;
-  }
-  return null;
-}
+// -------------------------------------------------------------
+// DAILY REPORT HANDLERS (With Capaian Confirmation)
+// -------------------------------------------------------------
 
 async function handleFile(chatId: string, user: any, fileId: string, caption: string) {
   if (user.telegramPaused) {
@@ -897,22 +1072,17 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
     const buffer = Buffer.from(await resp.arrayBuffer());
     const filePath = fileData.result.file_path;
     const ext = filePath.split('.').pop()?.toLowerCase() || '';
-    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-      : ext === 'png' ? 'image/png'
-      : ext === 'pdf' ? 'application/pdf'
-      : 'application/octet-stream';
+    const mime = ext === 'png' ? 'image/png' : ext === 'pdf' ? 'application/pdf' : 'image/jpeg';
 
-    // 1. Dapatkan Rencana Kerja aktif jika ada (untuk grounding konteks BPS)
     const activeRk = await getActiveRencana(user);
 
-    // 2. Tentukan kegiatan & capaian
     let kegiatan = caption?.trim();
     let capaian = kegiatan ? deriveDefaultCapaian(kegiatan) : 'Tercapai sesuai target.';
     const isAiPolish = user.telegramAiPolish !== false;
 
     if (kegiatan) {
       if (isAiPolish) {
-        await sendMsg(chatId, '🧠 AI merapikan deskripsi...');
+        await sendMsg(chatId, '🧠 AI merapikan deskripsi kegiatan & capaian...');
         try {
           const systemPrompt = getBpsReportSystemPrompt({
             tim: activeRk?.timNama,
@@ -923,9 +1093,9 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
             { role: 'system', content: systemPrompt },
             { role: 'user', content: kegiatan },
           ]);
-          if (aiResult.kegiatan) { 
-            kegiatan = aiResult.kegiatan; 
-            capaian = aiResult.capaian || deriveDefaultCapaian(kegiatan); 
+          if (aiResult.kegiatan) {
+            kegiatan = aiResult.kegiatan;
+            capaian = aiResult.capaian || deriveDefaultCapaian(kegiatan);
           }
         } catch (err) {
           console.error('AI polish error:', err);
@@ -956,7 +1126,6 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       }
     }
 
-    // 3. Tentukan Rencana Kerja final
     let rencana = activeRk;
     if (!rencana) {
       const rencanaList = await getUserRencana(user.id);
@@ -982,19 +1151,15 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
       return;
     }
 
-    // 3. Upload ke Drive (folder opsional -> otomatis KeepNoteAI)
     const tgl = parseTanggal(caption) || new Date();
     const today = toISODate(tgl);
     let buktiUrls: string | null = null;
-    await sendMsg(chatId, '📤 Mengunggah ke Google Drive...');
+    await sendMsg(chatId, '📤 Mengunggah bukti ke Google Drive...');
     try {
       const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientForUser, buildEvidenceFileName } = await import('@/lib/drive');
-      const { userSettings } = await import('@/db/schema');
       const [settings] = await db.select().from(userSettings)
         .where(eq(userSettings.userId, user.id as any)).limit(1);
-      if (!settings?.driveRefreshToken && !process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-        await sendMsg(chatId, '⚠️ Google Drive belum dihubungkan. Hubungkan di Pengaturan agar bukti tersimpan.');
-      } else {
+      if (settings?.driveRefreshToken || process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
         let drive;
         try {
           drive = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
@@ -1002,7 +1167,6 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
             : await getDriveClientForUser(user.id);
         } catch {
           drive = null;
-          await sendMsg(chatId, '⚠️ Gagal menghubungkan ke Google Drive.');
         }
         if (drive) {
           const base = buildEvidenceFileName(user.name, today, rencana.kode, kegiatan);
@@ -1014,26 +1178,49 @@ async function handleFile(chatId: string, user: any, fileId: string, caption: st
             const existing = buktiUrls ? JSON.parse(buktiUrls) : [];
             buktiUrls = JSON.stringify([...existing, ...captionUrls]);
           }
-          if (result?.fallback) {
-            await sendMsg(chatId, '⚠️ Folder tujuan Drive tidak bisa ditulis, file disimpan di folder KeepNoteAI Anda.');
-          }
         }
       }
     } catch (e: any) {
       console.error('Upload error:', e);
-      const msg = String(e?.response?.data?.error?.message || e?.message || e);
-      await sendMsg(chatId, `⚠️ Gagal unggah ke Drive: ${msg}`);
     }
 
-    // 4. Simpan laporan
-    await db.insert(laporan).values({
-      userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
-      kegiatan, progress: 100, capaian,
+    // Save as Pending Draft and Ask user whether they want AI Capaian or custom manual Capaian
+    const draftId = `draft_${Date.now()}`;
+    pendingDrafts.set(chatId, {
+      id: draftId,
+      userId: user.id,
+      chatId,
+      rencanaId: rencana.id,
+      rencanaNama: rencana.nama,
+      rencanaKode: rencana.kode,
+      kegiatan,
+      aiCapaian: capaian,
+      tanggal: today,
       buktiUrls,
+      isAiPolish,
+      createdAt: Date.now(),
     });
 
-    const modeTag = isAiPolish ? '' : '\n_Mode tanpa AI (teks asli dicatat langsung)_';
-    await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${kegiatan}\n*Capaian:* ${capaian}\n*Progres:* 100%${modeTag}\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
+    const draftMessage =
+      `📋 *Konfirmasi Draf Laporan Kegiatan*\n\n` +
+      `📌 *Program (RK):* ${rencana.nama} (\`${rencana.kode}\`)\n` +
+      `📝 *Kegiatan:* ${kegiatan}\n` +
+      `🎯 *Capaian:* ${capaian}\n\n` +
+      `_Apakah Anda ingin menggunakan rumusan capaian di atas atau menulis capaian sendiri?_`;
+
+    const inlineKeyboard = [
+      [
+        { text: '🤖 Gunakan Capaian AI', callback_data: 'draft:save_ai' },
+        { text: '✏️ Tulis Capaian Sendiri', callback_data: 'draft:manual_capaian' },
+      ],
+      [
+        { text: '❌ Batalkan', callback_data: 'draft:cancel' },
+      ],
+    ];
+
+    await sendMsg(chatId, draftMessage, {
+      reply_markup: { inline_keyboard: inlineKeyboard },
+    });
   } catch (e) {
     console.error('File handler error:', e);
     await sendMsg(chatId, '❌ Terjadi kesalahan. Coba lagi nanti.');
@@ -1060,7 +1247,7 @@ async function handleText(chatId: string, user: any, text: string) {
   let capaian = deriveDefaultCapaian(kegiatan);
 
   if (isAiPolish) {
-    await sendMsg(chatId, '🧠 AI merapikan deskripsi kegiatan...');
+    await sendMsg(chatId, '🧠 AI merapikan deskripsi kegiatan & capaian...');
     try {
       const systemPrompt = getBpsReportSystemPrompt({
         tim: activeRk?.timNama,
@@ -1113,77 +1300,336 @@ async function handleText(chatId: string, user: any, text: string) {
 
   const tgl = parseTanggal(text) || new Date();
   const today = toISODate(tgl);
-  await db.insert(laporan).values({
-    userId: user.id, tanggalMulai: today, tanggalSelesai: today, rencanaId: rencana.id,
-    kegiatan, progress: 100, capaian,
+
+  // Save as Pending Draft and Ask user whether they want AI Capaian or custom manual Capaian
+  const draftId = `draft_${Date.now()}`;
+  pendingDrafts.set(chatId, {
+    id: draftId,
+    userId: user.id,
+    chatId,
+    rencanaId: rencana.id,
+    rencanaNama: rencana.nama,
+    rencanaKode: rencana.kode,
+    kegiatan,
+    aiCapaian: capaian,
+    tanggal: today,
     buktiUrls,
+    isAiPolish,
+    createdAt: Date.now(),
   });
 
-  const buktiNote = buktiUrls ? `\n*Bukti:* ${urls.length} tautan` : '';
-  const modeTag = isAiPolish ? '' : '\n_Mode tanpa AI (teks asli dicatat langsung)_';
-  await sendMsg(chatId, `✅ *Laporan Berhasil Dibuat!*\n\n*Program:* ${rencana.nama} (${rencana.kode})\n*Kegiatan:* ${kegiatan}\n*Capaian:* ${capaian}\n*Progres:* 100%${buktiNote}${modeTag}\n\n📊 Lihat di web: https://keep-note-ai.vercel.app/laporan`);
+  const draftMessage =
+    `📋 *Konfirmasi Draf Laporan Kegiatan*\n\n` +
+    `📌 *Program (RK):* ${rencana.nama} (\`${rencana.kode}\`)\n` +
+    `📝 *Kegiatan:* ${kegiatan}\n` +
+    `🎯 *Capaian:* ${capaian}\n\n` +
+    `_Apakah Anda ingin menggunakan rumusan capaian di atas atau menulis capaian sendiri?_`;
+
+  const inlineKeyboard = [
+    [
+      { text: '🤖 Gunakan Capaian AI', callback_data: 'draft:save_ai' },
+      { text: '✏️ Tulis Capaian Sendiri', callback_data: 'draft:manual_capaian' },
+    ],
+    [
+      { text: '❌ Batalkan', callback_data: 'draft:cancel' },
+    ],
+  ];
+
+  await sendMsg(chatId, draftMessage, {
+    reply_markup: { inline_keyboard: inlineKeyboard },
+  });
 }
 
-async function handleGenerateJurnal(chatId: string, user: any, param: string) {
-  const todayDate = toISODate(new Date());
-  let targetDate = todayDate;
-  let rawDescription = '';
+// -------------------------------------------------------------
+// INTERACTIVE /JURNAL (DOSSIER) WIZARD & MULTI-PHOTO SYSTEM
+// -------------------------------------------------------------
 
-  const parsedDate = parseTanggal(param);
-  if (parsedDate) {
-    targetDate = toISODate(parsedDate);
-  } else if (param.toLowerCase() === 'kemarin') {
-    const yest = new Date();
-    yest.setDate(yest.getDate() - 1);
-    targetDate = toISODate(yest);
-  } else if (param.trim().length > 0 && param.trim().split(' ').length > 2) {
-    // User typed an actual activity note directly!
-    rawDescription = param.trim();
+async function startJurnalWizard(chatId: string, user: any, param?: string) {
+  // Clear any existing session
+  jurnalSessions.delete(chatId);
+  userStates.delete(chatId);
+
+  const today = toISODate(new Date());
+  const activeRk = await getActiveRencana(user);
+
+  // If user provided direct description argument in "/jurnal <teks>"
+  if (param && param.trim().length > 0 && param.trim().split(' ').length > 2 && !parseTanggal(param)) {
+    const session: JurnalWizardSession = {
+      userId: user.id,
+      chatId,
+      step: 'step_rk',
+      judul: 'Laporan Pelaksanaan Kegiatan Harian',
+      tanggal: today,
+      waktu: '08.00 - 16.00 WIB',
+      tempat: 'Kantor BPS & Wilayah Tugas',
+      rawDescription: param.trim(),
+      rencanaId: activeRk?.id,
+      rencanaNama: activeRk?.nama,
+      rencanaKode: activeRk?.kode,
+      timNama: activeRk?.timNama,
+      photos: [],
+      createdAt: Date.now(),
+    };
+    jurnalSessions.set(chatId, session);
+
+    // If active RK exists, advance directly to photos
+    if (activeRk) {
+      session.step = 'step_photos';
+      await sendStepPhotosPrompt(chatId, session);
+      return;
+    }
+
+    await sendStepRkPrompt(chatId, user, session);
+    return;
   }
 
-  // If no manual description given in param, fetch from user's recorded reports for targetDate
-  let photos: { dataUrl: string; caption: string }[] = [];
-  if (!rawDescription) {
-    const reports = await db
+  // Initialize new interactive session starting at Step 1: Judul
+  const session: JurnalWizardSession = {
+    userId: user.id,
+    chatId,
+    step: 'step_title',
+    tanggal: today,
+    waktu: '08.00 - 16.00 WIB',
+    tempat: 'Kantor BPS & Wilayah Tugas',
+    photos: [],
+    createdAt: Date.now(),
+  };
+  jurnalSessions.set(chatId, session);
+
+  const msg =
+    `📖 *Penyusunan Jurnal Kerja Harian BPS (Dossier)*\n\n` +
+    `*Langkah 1/5:* Masukkan *Judul / Topik Jurnal Kegiatan*\n` +
+    `_Contoh: Briefing Mitra dan Pengawasan Lapangan Survei Sakernas_\n\n` +
+    `Atau sentuh tombol di bawah untuk menggunakan judul standar:`;
+
+  const buttons = [
+    [{ text: '📝 Laporan Pelaksanaan Kegiatan Harian', callback_data: 'j:title_std' }],
+    [{ text: '❌ Batalkan', callback_data: 'j:cancel' }],
+  ];
+
+  await sendMsg(chatId, msg, { reply_markup: { inline_keyboard: buttons } });
+}
+
+async function sendStepDateTimePrompt(chatId: string, session: JurnalWizardSession, msgId?: number) {
+  session.step = 'step_datetime';
+  const today = session.tanggal || toISODate(new Date());
+
+  const text =
+    `📅 *Langkah 2/5: Tanggal & Lokasi Pelaksanaan*\n\n` +
+    `• *Judul:* ${session.judul}\n` +
+    `• *Tanggal:* ${formatDateIndo(today)}\n` +
+    `• *Waktu:* ${session.waktu || '08.00 - 16.00 WIB'}\n` +
+    `• *Tempat:* ${session.tempat || 'Kantor BPS & Wilayah Tugas'}\n\n` +
+    `Gunakan pengaturan default di atas atau ubah tanggal & tempat?`;
+
+  const buttons = [
+    [
+      { text: '✅ Gunakan Default (Hari Ini & Kantor BPS)', callback_data: 'j:dt_default' },
+    ],
+    [
+      { text: '✏️ Ubah Tanggal / Lokasi', callback_data: 'j:dt_custom' },
+      { text: '❌ Batalkan', callback_data: 'j:cancel' },
+    ],
+  ];
+
+  if (msgId) {
+    await editMsgText(chatId, msgId, text, { reply_markup: { inline_keyboard: buttons } });
+  } else {
+    await sendMsg(chatId, text, { reply_markup: { inline_keyboard: buttons } });
+  }
+}
+
+async function sendStepDescriptionPrompt(chatId: string, user: any, session: JurnalWizardSession, msgId?: number) {
+  session.step = 'step_description';
+  const today = session.tanggal || toISODate(new Date());
+
+  // Check if user has daily reports recorded for today
+  const existingReports = await db
+    .select({ kegiatan: laporan.kegiatan, capaian: laporan.capaian })
+    .from(laporan)
+    .where(and(eq(laporan.userId, user.id as any), eq(laporan.tanggalMulai, today)))
+    .orderBy(laporan.createdAt);
+
+  const text =
+    `✍️ *Langkah 3/5: Uraian / Catatan Aktivitas Kerja*\n\n` +
+    `Silakan ketik dan kirimkan poin-poin aktivitas kegiatan yang Anda lakukan hari ini.\n\n` +
+    `🧠 AI akan otomatis menyusunnya ke dalam 4 bagian resmi kedinasan BPS:\n` +
+    `1. *Latar Belakang & Tujuan*\n` +
+    `2. *Uraian Pelaksanaan Kegiatan Rinci*\n` +
+    `3. *Hasil & Capaian Output Terukur*\n` +
+    `4. *Kendala & Rencana Tindak Lanjut*\n\n` +
+    (existingReports.length > 0
+      ? `_Ditemukan ${existingReports.length} catatan kegiatan hari ini di database. Anda dapat memuatnya langsung via tombol di bawah._`
+      : `_Contoh ketik: Pagi koordinasi dengan tim Sakernas di aula. Siang verifikasi sampel Fasih di Desa Sukamaju. Sore rekap 25 dokumen._`);
+
+  const buttons: any[] = [];
+  if (existingReports.length > 0) {
+    buttons.push([{ text: `📥 Muat dari ${existingReports.length} Laporan Hari Ini`, callback_data: 'j:load_reports' }]);
+  }
+  buttons.push([{ text: '❌ Batalkan', callback_data: 'j:cancel' }]);
+
+  if (msgId) {
+    await editMsgText(chatId, msgId, text, { reply_markup: { inline_keyboard: buttons } });
+  } else {
+    await sendMsg(chatId, text, { reply_markup: { inline_keyboard: buttons } });
+  }
+}
+
+async function sendStepRkPrompt(chatId: string, user: any, session: JurnalWizardSession, msgId?: number) {
+  session.step = 'step_rk';
+  const list = await getUserRencana(user.id);
+  const activeRk = await getActiveRencana(user);
+
+  let text = `🎯 *Langkah 4/5: Pilih Rencana Kinerja (RK) & Tim Kerja*\n\n` +
+    `Silakan sentuh nomor atau tombol RK yang menaungi kegiatan ini:\n\n`;
+
+  const buttons: any[] = [];
+
+  if (activeRk) {
+    buttons.push([
+      {
+        text: `⭐ Gunakan RK Aktif: ${activeRk.kode} (${activeRk.nama.slice(0, 20)}...)`,
+        callback_data: `j:setrk:${activeRk.id}`,
+      },
+    ]);
+  }
+
+  list.slice(0, 6).forEach((r: any, idx: number) => {
+    const num = idx + 1;
+    const cleanNama = (r.nama || '').replace(/\*/g, '');
+    text += `*${num}.* *${cleanNama}*\n     🏷️ \`${r.kode}\` • 👥 _${r.timNama || 'BPS'}_\n\n`;
+    buttons.push([
+      {
+        text: `📌 ${num}. [${r.kode}] ${cleanNama.slice(0, 24)}...`,
+        callback_data: `j:setrk:${r.id}`,
+      },
+    ]);
+  });
+
+  buttons.push([{ text: '❌ Batalkan', callback_data: 'j:cancel' }]);
+
+  if (msgId) {
+    await editMsgText(chatId, msgId, text, { reply_markup: { inline_keyboard: buttons } });
+  } else {
+    await sendMsg(chatId, text, { reply_markup: { inline_keyboard: buttons } });
+  }
+}
+
+async function sendStepPhotosPrompt(chatId: string, session: JurnalWizardSession, msgId?: number) {
+  session.step = 'step_photos';
+  const count = session.photos.length;
+
+  const text =
+    `📸 *Langkah 5/5: Unggah Foto Dokumentasi Kegiatan (Multi-Foto)*\n\n` +
+    `Silakan kirimkan foto-foto dokumentasi kegiatan Anda sekarang.\n` +
+    `• Bot mendukung *banyak foto sekaligus / bertahap*.\n` +
+    `• Setiap foto akan otomatis dimasukkan ke grid dokumentasi PDF (2 kolom rapi ber-Kop BPS).\n\n` +
+    `📊 Foto terkumpul saat ini: *${count} foto*` +
+    (session.tandaTanganUrl ? `\n✍️ Tanda Tangan: *✅ Sudah diunggah*` : '');
+
+  const buttons: any[] = [];
+  buttons.push([
+    {
+      text: count > 0 ? `🖨️ Selesai & Buat PDF (${count} Foto)` : '⏩ Selesai & Buat PDF (Tanpa Foto)',
+      callback_data: 'j:finish',
+    },
+  ]);
+
+  const actionRow: any[] = [
+    { text: '✍️ Upload TTD', callback_data: 'j:add_sig' },
+  ];
+  if (count > 0) {
+    actionRow.push({ text: '🗑️ Reset Foto', callback_data: 'j:reset_photos' });
+  }
+  buttons.push(actionRow);
+  buttons.push([{ text: '❌ Batalkan', callback_data: 'j:cancel' }]);
+
+  if (msgId) {
+    await editMsgText(chatId, msgId, text, { reply_markup: { inline_keyboard: buttons } });
+  } else {
+    await sendMsg(chatId, text, { reply_markup: { inline_keyboard: buttons } });
+  }
+}
+
+async function handleJurnalCallback(chatId: string, user: any, data: string, cbId: string, cbMsgId?: number) {
+  const session = jurnalSessions.get(chatId);
+  if (!session) {
+    await answerCallbackQuery(cbId, 'Sesi jurnal telah berakhir. Ketik /jurnal untuk mulai baru.');
+    if (cbMsgId) await editMsgText(chatId, cbMsgId, '⚠️ Sesi telah berakhir. Ketik `/jurnal` untuk membuat jurnal baru.');
+    return;
+  }
+
+  if (data === 'j:cancel') {
+    jurnalSessions.delete(chatId);
+    userStates.delete(chatId);
+    await answerCallbackQuery(cbId, 'Dibatalkan');
+    if (cbMsgId) await editMsgText(chatId, cbMsgId, '❌ Pembuatan Jurnal Kegiatan dibatalkan.');
+    return;
+  }
+
+  if (data === 'j:title_std') {
+    session.judul = 'Laporan Pelaksanaan Kegiatan Harian';
+    await answerCallbackQuery(cbId, 'Judul standar dipilih');
+    await sendStepDateTimePrompt(chatId, session, cbMsgId);
+    return;
+  }
+
+  if (data === 'j:dt_default') {
+    session.tanggal = session.tanggal || toISODate(new Date());
+    session.waktu = '08.00 - 16.00 WIB';
+    session.tempat = 'Kantor BPS & Wilayah Tugas';
+    await answerCallbackQuery(cbId, 'Tanggal & Tempat default dipilih');
+    await sendStepDescriptionPrompt(chatId, user, session, cbMsgId);
+    return;
+  }
+
+  if (data === 'j:dt_custom') {
+    session.step = 'step_datetime_input';
+    await answerCallbackQuery(cbId);
+    const prompt =
+      `📅 *Ketik Tanggal & Tempat Pelaksanaan Kegiatan:*\n\n` +
+      `Format contoh:\n` +
+      `\`2026-10-04, Aula Kantor BPS Provinsi Sumatera Utara\`\n\n` +
+      `_Atau ketik tanggal saja (contoh: 4 Oktober 2026)_`;
+    if (cbMsgId) {
+      await editMsgText(chatId, cbMsgId, prompt);
+    } else {
+      await sendMsg(chatId, prompt);
+    }
+    return;
+  }
+
+  if (data === 'j:load_reports') {
+    const today = session.tanggal || toISODate(new Date());
+    const existingReports = await db
       .select({
         kegiatan: laporan.kegiatan,
         capaian: laporan.capaian,
         buktiUrls: laporan.buktiUrls,
       })
       .from(laporan)
-      .where(and(eq(laporan.userId, user.id as any), eq(laporan.tanggalMulai, targetDate)))
+      .where(and(eq(laporan.userId, user.id as any), eq(laporan.tanggalMulai, today)))
       .orderBy(laporan.createdAt);
 
-    if (reports.length === 0) {
-      await sendMsg(
-        chatId,
-        `📭 *Belum ada catatan kegiatan untuk tanggal ${formatDateIndo(targetDate)}.*\n\n` +
-        `Anda dapat membuat laporan dengan cara:\n` +
-        `1. Kirim catatan kegiatan atau foto hari ini, lalu ketik \`/jurnal\`\n` +
-        `2. Atau buat langsung dengan format:\n` +
-        `\`/jurnal <tuliskan aktivitas Anda hari ini>\`\n\n` +
-        `_Contoh:_\n` +
-        `\`/jurnal Pagi briefing mitra Sakernas di aula. Siang verifikasi anomali Fasih di desa binaan. Sore rekap 15 dokumen.\``
-      );
+    if (existingReports.length === 0) {
+      await answerCallbackQuery(cbId, 'Tidak ada laporan untuk hari ini.');
       return;
     }
 
-    // Aggregate activities
-    rawDescription = reports
+    session.rawDescription = existingReports
       .map((r, i) => `${i + 1}. ${r.kegiatan} (Capaian: ${r.capaian})`)
       .join('\n');
 
-    // Extract photos from buktiUrls
-    for (const r of reports) {
+    for (const r of existingReports) {
       if (r.buktiUrls) {
         try {
           const urls = JSON.parse(r.buktiUrls);
           if (Array.isArray(urls)) {
             for (const u of urls) {
-              if (typeof u === 'string' && u.startsWith('http')) {
-                photos.push({
+              if (typeof u === 'string' && u.startsWith('http') && !session.photos.some((p) => p.dataUrl === u)) {
+                session.photos.push({
                   dataUrl: u,
-                  caption: `Dokumentasi kegiatan ${formatDateIndo(targetDate)}`,
+                  caption: `Dokumentasi Pelaksanaan Kegiatan - Foto ${session.photos.length + 1}`,
                 });
               }
             }
@@ -1191,84 +1637,264 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
         } catch {}
       }
     }
+
+    await answerCallbackQuery(cbId, `Memuat ${existingReports.length} kegiatan!`);
+    await sendStepRkPrompt(chatId, user, session, cbMsgId);
+    return;
   }
 
-  await sendMsg(
-    chatId,
-    `⏳ *Sedang menyusun Jurnal Kerja Harian BPS (${formatDateIndo(targetDate)})...*\n` +
-    `Mohon tunggu sebentar, dokumen PDF & Word sedang diproses.`
-  );
+  if (data.startsWith('j:setrk:')) {
+    const targetId = data.replace('j:setrk:', '');
+    const list = await getUserRencana(user.id);
+    const matched = list.find((r: any) => r.id === targetId);
+    if (matched) {
+      session.rencanaId = matched.id;
+      session.rencanaNama = matched.nama;
+      session.rencanaKode = matched.kode;
+      session.timNama = matched.timNama;
+    }
+    await answerCallbackQuery(cbId, 'RK terpilih');
+    await sendStepPhotosPrompt(chatId, session, cbMsgId);
+    return;
+  }
 
+  if (data === 'j:add_sig') {
+    session.step = 'step_signature';
+    await answerCallbackQuery(cbId);
+    const sigMsg =
+      `✍️ *Upload Tanda Tangan Digital*\n\n` +
+      `Silakan kirimkan foto / scan tanda tangan Anda (pada kertas putih).\n` +
+      `Tanda tangan akan otomatis diatur proporsional pada kolom Pelaksana Kegiatan.\n\n` +
+      `_Atau sentuh tombol di bawah untuk melanjutkan tanpa gambar TTD:_`;
+
+    const buttons = [
+      [{ text: '⏩ Lewati TTD & Generate PDF', callback_data: 'j:finish' }],
+      [{ text: '⬅️ Kembali ke Foto', callback_data: 'j:back_photos' }],
+    ];
+
+    if (cbMsgId) {
+      await editMsgText(chatId, cbMsgId, sigMsg, { reply_markup: { inline_keyboard: buttons } });
+    } else {
+      await sendMsg(chatId, sigMsg, { reply_markup: { inline_keyboard: buttons } });
+    }
+    return;
+  }
+
+  if (data === 'j:back_photos') {
+    await answerCallbackQuery(cbId);
+    await sendStepPhotosPrompt(chatId, session, cbMsgId);
+    return;
+  }
+
+  if (data === 'j:reset_photos') {
+    session.photos = [];
+    await answerCallbackQuery(cbId, 'Foto direset.');
+    await sendStepPhotosPrompt(chatId, session, cbMsgId);
+    return;
+  }
+
+  if (data === 'j:finish' || data === 'j:finish_nophoto') {
+    await answerCallbackQuery(cbId, '⏳ Memproses PDF Dossier...');
+    if (cbMsgId) {
+      await editMsgText(
+        chatId,
+        cbMsgId,
+        `⏳ *Sedang menyusun Jurnal Resmi BPS & memproses dokumen PDF...*\n` +
+        `AI sedang merapikan Latar Belakang, Uraian Rinci, Capaian Output, dan menata layout foto. Mohon tunggu beberapa detik.`
+      );
+    }
+    await renderJurnalPdfAndSend(chatId, user, session);
+    return;
+  }
+
+  await answerCallbackQuery(cbId);
+}
+
+async function handleJurnalText(chatId: string, user: any, text: string, session: JurnalWizardSession) {
+  if (text.startsWith('/')) return;
+
+  if (session.step === 'step_title') {
+    session.judul = text.trim();
+    await sendStepDateTimePrompt(chatId, session);
+    return;
+  }
+
+  if (session.step === 'step_datetime_input') {
+    const parts = text.split(',');
+    const parsedDate = parseTanggal(parts[0]);
+    if (parsedDate) {
+      session.tanggal = toISODate(parsedDate);
+    }
+    if (parts[1]) {
+      session.tempat = parts.slice(1).join(',').trim();
+    } else if (!parsedDate) {
+      session.tempat = text.trim();
+    }
+    await sendStepDescriptionPrompt(chatId, user, session);
+    return;
+  }
+
+  if (session.step === 'step_description') {
+    session.rawDescription = text.trim();
+    await sendStepRkPrompt(chatId, user, session);
+    return;
+  }
+
+  if (session.step === 'step_photos') {
+    // If user sends text during photo step, treat it as finishing or setting photo caption
+    if (session.photos.length > 0) {
+      session.photos[session.photos.length - 1].caption = text.trim();
+      await sendMsg(chatId, `📝 Caption foto terakhir diperbarui: "${text.trim()}".`);
+      await sendStepPhotosPrompt(chatId, session);
+    } else {
+      await sendStepPhotosPrompt(chatId, session);
+    }
+    return;
+  }
+
+  if (session.step === 'step_signature') {
+    // If text entered, could be NIP
+    if (/^\d{10,}$/.test(text.replace(/\s+/g, ''))) {
+      session.nipPelaksana = text.trim();
+      await sendMsg(chatId, `✅ NIP Pelaksana dicatat: ${session.nipPelaksana}`);
+      await sendStepPhotosPrompt(chatId, session);
+      return;
+    }
+  }
+}
+
+async function handleJurnalPhoto(
+  chatId: string,
+  user: any,
+  photoArray: any[],
+  caption: string,
+  session: JurnalWizardSession
+) {
   try {
-    const activeRk = await getActiveRencana(user);
+    const highestResPhoto = photoArray[photoArray.length - 1];
+    const fileRes = await tgFetch('getFile', { file_id: highestResPhoto.file_id });
+    const fileData = await fileRes.json();
+
+    if (!fileData.ok || !fileData.result?.file_path) {
+      await sendMsg(chatId, '❌ Gagal mengunduh foto dari Telegram.');
+      return;
+    }
+
+    const fileUrl = `https://api.telegram.org/file/bot${TG_TOKEN}/${fileData.result.file_path}`;
+    const resp = await fetch(fileUrl);
+    const arrayBuf = await resp.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
+    const base64 = buffer.toString('base64');
+    const ext = fileData.result.file_path.split('.').pop()?.toLowerCase() || 'jpg';
+    const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+    const dataUrl = `data:${mime};base64,${base64}`;
+
+    if (session.step === 'step_signature') {
+      session.tandaTanganUrl = dataUrl;
+      await sendMsg(chatId, '✍️ *Tanda tangan berhasil diunggah!*');
+      await sendStepPhotosPrompt(chatId, session);
+      return;
+    }
+
+    // Add to photos array
+    const photoNumber = session.photos.length + 1;
+    const finalCaption = caption?.trim() || `Dokumentasi Pelaksanaan Kegiatan - Foto ${photoNumber}`;
+
+    session.photos.push({
+      dataUrl,
+      caption: finalCaption,
+    });
+
+    const msgText =
+      `📸 *Foto ke-${photoNumber} berhasil ditambahkan!*\n` +
+      `• Keterangan: _${finalCaption}_\n` +
+      `• Total foto dokumentasi: *${session.photos.length} foto*\n\n` +
+      `_Kirim foto berikutnya jika masih ada, atau sentuh tombol di bawah untuk membuat PDF:_`;
+
+    const buttons = [
+      [
+        {
+          text: `🖨️ Selesai & Buat PDF (${session.photos.length} Foto)`,
+          callback_data: 'j:finish',
+        },
+      ],
+      [
+        { text: '✍️ Upload TTD', callback_data: 'j:add_sig' },
+        { text: '🗑️ Reset Foto', callback_data: 'j:reset_photos' },
+      ],
+      [
+        { text: '❌ Batalkan', callback_data: 'j:cancel' },
+      ],
+    ];
+
+    await sendMsg(chatId, msgText, { reply_markup: { inline_keyboard: buttons } });
+  } catch (err: any) {
+    console.error('Error handling jurnal photo:', err);
+    await sendMsg(chatId, '❌ Terjadi kesalahan saat memproses foto.');
+  }
+}
+
+async function renderJurnalPdfAndSend(chatId: string, user: any, session: JurnalWizardSession) {
+  try {
+    const rawDesc = session.rawDescription || session.judul || 'Pelaksanaan kegiatan kedinasan harian BPS';
     const isAiPolish = user.telegramAiPolish !== false;
+    const targetDate = session.tanggal || toISODate(new Date());
 
     let dossierData: any;
     if (isAiPolish) {
-      dossierData = await polishDailyDossier(rawDescription, {
-        tim: activeRk?.timNama || 'Tim Kerja BPS',
-        rencana: activeRk ? `${activeRk.nama} (${activeRk.kode})` : undefined,
+      dossierData = await polishDailyDossier(rawDesc, {
+        tim: session.timNama || 'Tim Kerja BPS',
+        rencana: session.rencanaNama ? `${session.rencanaNama} (${session.rencanaKode})` : undefined,
         pelaksana: user.name || 'Pegawai BPS',
-        lokasi: 'Kantor / Wilayah Tugas BPS',
+        judul: session.judul,
+        lokasi: session.tempat || 'Kantor BPS & Wilayah Tugas',
       });
     } else {
-      const lines = rawDescription.split('\n').filter((l) => l.trim().length > 0);
+      const lines = rawDesc.split('\n').filter((l) => l.trim().length > 0);
       dossierData = {
-        judul: 'Laporan Pelaksanaan Kegiatan Harian',
-        ringkasan: lines[0] || rawDescription,
+        judul: session.judul || 'Laporan Pelaksanaan Kegiatan Harian',
+        ringkasan: lines[0] || rawDesc,
         latarBelakang: null,
-        uraianKegiatan: lines.length > 1 ? lines : [rawDescription],
-        capaianOutput: ['Target kegiatan terlaksana sesuai rencana kedinasan BPS.'],
+        uraianKegiatan: lines.length > 1 ? lines : [rawDesc],
+        capaianOutput: ['Target kegiatan kedinasan BPS terlaksana sesuai rencana.'],
         kendalaTindakLanjut: null,
       };
     }
 
     const payload: DossierDocumentPayload = {
-      judul: dossierData.judul || 'Laporan Pelaksanaan Kegiatan Harian',
+      judul: dossierData.judul || session.judul || 'Laporan Pelaksanaan Kegiatan Harian',
       tanggal: targetDate,
-      waktu: '08.00 - 16.00 WIB',
-      tempat: 'Kantor BPS & Wilayah Tugas',
-      timKerja: activeRk?.timNama || 'Badan Pusat Statistik',
-      rencanaKinerja: activeRk ? `${activeRk.nama} (${activeRk.kode})` : 'Pelaksanaan Tugas Kedinasan BPS',
+      waktu: session.waktu || '08.00 - 16.00 WIB',
+      tempat: session.tempat || 'Kantor BPS & Wilayah Tugas',
+      timKerja: session.timNama || 'Badan Pusat Statistik',
+      rencanaKinerja: session.rencanaNama
+        ? `${session.rencanaNama} (${session.rencanaKode})`
+        : 'Pelaksanaan Tugas Kedinasan BPS',
       pelaksana: user.name || 'Pegawai BPS',
-      nipPelaksana: undefined,
-      ringkasan: dossierData.ringkasan || rawDescription,
+      nipPelaksana: session.nipPelaksana || undefined,
+      ringkasan: dossierData.ringkasan || rawDesc,
       latarBelakang: dossierData.latarBelakang || undefined,
       uraianKegiatan:
-        dossierData.uraianKegiatan?.length > 0
+        Array.isArray(dossierData.uraianKegiatan) && dossierData.uraianKegiatan.length > 0
           ? dossierData.uraianKegiatan
-          : [rawDescription],
+          : [rawDesc],
       capaianOutput:
-        dossierData.capaianOutput?.length > 0
+        Array.isArray(dossierData.capaianOutput) && dossierData.capaianOutput.length > 0
           ? dossierData.capaianOutput
-          : ['Kegiatan selesai dengan baik.'],
+          : ['Kegiatan terlaksana dengan baik.'],
       kendalaTindakLanjut: dossierData.kendalaTindakLanjut || undefined,
-      photos: photos.slice(0, 6),
+      photos: session.photos,
+      tandaTanganUrl: session.tandaTanganUrl || undefined,
     };
 
-    // Generate PDF
+    // 1. Generate PDF
     const pdfBytes = await generateDailyDossierPdf(payload);
     const safeTitle = (payload.judul || 'Jurnal_BPS')
       .replace(/[^a-zA-Z0-9_\-]/g, '_')
       .slice(0, 30);
     const pdfFilename = `${safeTitle}_${targetDate}.pdf`;
 
-    await sendTgDocument(
-      chatId,
-      pdfBytes,
-      pdfFilename,
-      `✅ *Jurnal Kegiatan Harian BPS Berhasil Dibuat!*\n\n` +
-      `📅 *Tanggal:* ${formatDateIndo(targetDate)}\n` +
-      `👤 *Pelaksana:* ${user.name}\n` +
-      `🎯 *Program:* ${payload.rencanaKinerja}\n\n` +
-      `📄 _Dokumen PDF resmi ber-Kop BPS siap cetak._`
-    );
-
-    // Generate DOCX
-    const docxBuf = await generateDailyDossierDocx(payload);
-    const docxFilename = `${safeTitle}_${targetDate}.docx`;
-
-    // Upload PDF to Google Drive if configured
+    // 2. Upload PDF to Google Drive if configured
     let pdfDriveLink: string | null = null;
     try {
       const { uploadToDrive, getDriveClientFromServiceAccount, getDriveClientForUser, buildEvidenceFileName } = await import('@/lib/drive');
@@ -1289,7 +1915,7 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
         const base = buildEvidenceFileName(
           user.name || 'Pegawai_BPS',
           targetDate,
-          activeRk?.kode || 'RK',
+          session.rencanaKode || 'RK',
           payload.judul || 'Jurnal_Harian'
         );
         const fileName = `${base}.pdf`;
@@ -1308,33 +1934,33 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
       console.warn('Drive upload error for telegram jurnal pdf:', driveErr);
     }
 
-    // Save to Laporan DB
-    let targetRk: any = activeRk;
-    if (!targetRk) {
+    // 3. Save to database laporan table
+    let targetRkId = session.rencanaId;
+    if (!targetRkId) {
       const rkList = await getUserRencana(user.id);
-      if (rkList.length > 0) targetRk = rkList[0];
+      if (rkList.length > 0) targetRkId = rkList[0].id;
     }
 
-    if (targetRk) {
+    if (targetRkId) {
       try {
         const buktiArr: string[] = [];
         if (pdfDriveLink) buktiArr.push(pdfDriveLink);
-        for (const p of photos) {
+        for (const p of session.photos) {
           if (p.dataUrl && p.dataUrl.startsWith('http') && !buktiArr.includes(p.dataUrl)) {
             buktiArr.push(p.dataUrl);
           }
         }
 
         await db.insert(laporan).values({
-          userId: user.id,
+          userId: user.id as any,
           tanggalMulai: targetDate,
           tanggalSelesai: targetDate,
           jamMulai: '08:00',
           jamSelesai: '16:00',
-          rencanaId: targetRk.id,
+          rencanaId: targetRkId as any,
           kegiatan: payload.judul || `Jurnal Kegiatan ${formatDateIndo(targetDate)}`,
           progress: 100,
-          capaian: payload.capaianOutput?.join('; ') || payload.ringkasan || 'Jurnal harian terselesaikan',
+          capaian: Array.isArray(payload.capaianOutput) ? payload.capaianOutput.join('; ') : payload.ringkasan || 'Jurnal harian terselesaikan',
           buktiUrls: buktiArr.length > 0 ? JSON.stringify(buktiArr) : null,
           masukanSkp: payload.ringkasan || null,
         });
@@ -1343,21 +1969,38 @@ async function handleGenerateJurnal(chatId: string, user: any, param: string) {
       }
     }
 
-    const docxCaption = pdfDriveLink
-      ? `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.\n\n☁️ *PDF Tersimpan di Google Drive & Menu Laporan:*\n🔗 [Buka PDF di Google Drive](${pdfDriveLink})\n📊 Tercatat di web: https://keep-note-ai.vercel.app/laporan`
-      : `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.\n\n📊 Tercatat di web: https://keep-note-ai.vercel.app/laporan`;
+    // 4. Send PDF file via Telegram
+    const pdfCaption =
+      `✅ *Jurnal Kegiatan Harian BPS Berhasil Dibuat!*\n\n` +
+      `📅 *Tanggal:* ${formatDateIndo(targetDate)}\n` +
+      `👤 *Pelaksana:* ${user.name}\n` +
+      `🎯 *Program:* ${payload.rencanaKinerja}\n` +
+      `📸 *Dokumentasi:* ${session.photos.length} Foto\n\n` +
+      (pdfDriveLink ? `☁️ [Buka PDF di Google Drive](${pdfDriveLink})\n\n` : '') +
+      `📄 _Dokumen PDF resmi ber-Kop BPS siap cetak._`;
 
-    await sendTgDocument(
-      chatId,
-      docxBuf,
-      docxFilename,
-      docxCaption
-    );
+    await sendTgDocument(chatId, pdfBytes, pdfFilename, pdfCaption);
+
+    // 5. Generate and Send DOCX
+    try {
+      const docxBuf = await generateDailyDossierDocx(payload);
+      const docxFilename = `${safeTitle}_${targetDate}.docx`;
+      const docxCaption =
+        `📝 *Versi Word (.docx)* — Dokumen resmi siap diedit.\n\n` +
+        `📊 Tercatat di web: https://keep-note-ai.vercel.app/laporan`;
+
+      await sendTgDocument(chatId, docxBuf, docxFilename, docxCaption);
+    } catch (docxErr) {
+      console.warn('DOCX generate error in telegram jurnal:', docxErr);
+    }
+
+    // Clear session
+    jurnalSessions.delete(chatId);
+    userStates.delete(chatId);
   } catch (err: any) {
-    console.error('Error generating jurnal in Telegram:', err);
-    await sendMsg(chatId, `❌ Gagal membuat dokumen jurnal: ${err?.message || 'Terjadi kesalahan sistem.'}`);
+    console.error('Error in renderJurnalPdfAndSend:', err);
+    await sendMsg(chatId, `❌ Gagal memproses dokumen jurnal: ${err?.message || 'Terjadi kesalahan sistem.'}`);
   }
 }
 
 export const GET = POST;
-

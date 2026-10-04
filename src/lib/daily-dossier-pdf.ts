@@ -48,16 +48,36 @@ async function resolveImageToBase64(imageUrl: string): Promise<string | null> {
 
     // Google Drive URL
     let fetchUrl = imageUrl;
-    const driveMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    const driveMatch = imageUrl.match(/(?:id=|\/d\/)([a-zA-Z0-9_-]+)/);
     if (driveMatch) {
-      fetchUrl = `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
+      fetchUrl = `https://drive.google.com/thumbnail?id=${driveMatch[1]}&sz=w1600`;
     }
 
     const res = await fetch(fetchUrl, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (driveMatch) {
+        // Fallback to uc download url
+        const fbRes = await fetch(`https://drive.google.com/uc?export=download&id=${driveMatch[1]}`, { signal: AbortSignal.timeout(10000) });
+        if (fbRes.ok) {
+          const contentType = fbRes.headers.get('content-type') || '';
+          if (contentType.startsWith('image/')) {
+            const arrayBuffer = await fbRes.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            return `data:${contentType};base64,${buffer.toString('base64')}`;
+          }
+        }
+      }
+      return null;
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.startsWith('image/')) {
+      console.warn('Resolved URL returned non-image content-type:', contentType);
+      return null;
+    }
+
     const arrayBuffer = await res.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const contentType = res.headers.get('content-type') || 'image/jpeg';
     return `data:${contentType};base64,${buffer.toString('base64')}`;
   } catch (err) {
     console.warn('Failed to resolve image to base64 for PDF:', err);
